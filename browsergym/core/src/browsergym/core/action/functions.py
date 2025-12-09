@@ -370,6 +370,10 @@ def mouse_click(x: float, y: float, button: Literal["left", "middle", "right"] =
     if demo_mode != "off":
         smooth_move_visual_cursor_to(page, x, y)
         highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
+    # Explicitly move mouse to position first to ensure mouseover/mouseenter events
+    # are dispatched before clicking. This is important for complex UI elements
+    # (like ServiceNow dropdowns) that may depend on hover state.
+    page.mouse.move(x, y)
     page.mouse.click(x, y, button=button)
 
 
@@ -387,6 +391,10 @@ def mouse_dblclick(x: float, y: float, button: Literal["left", "middle", "right"
     if demo_mode != "off":
         smooth_move_visual_cursor_to(page, x, y)
         highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
+    # Explicitly move mouse to position first to ensure mouseover/mouseenter events
+    # are dispatched before clicking. This is important for complex UI elements
+    # (like ServiceNow dropdowns) that may depend on hover state.
+    page.mouse.move(x, y)
     page.mouse.dblclick(x, y, button=button)
 
 
@@ -651,6 +659,10 @@ def mouse_upload_file(x: float, y: float, file: str | list[str]):
         smooth_move_visual_cursor_to(page, x, y)
         highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
 
+    # Explicitly move mouse to position first to ensure mouseover/mouseenter events
+    # are dispatched before clicking. This is important for complex UI elements
+    # that may depend on hover state.
+    page.mouse.move(x, y)
     with page.expect_file_chooser() as fc_info:
         page.mouse.click(x, y)
 
