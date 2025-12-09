@@ -1,6 +1,9 @@
+import logging
 from typing import Literal
 
 import playwright.sync_api
+
+logger = logging.getLogger(__name__)
 
 
 def get_elem_by_bid(
@@ -98,13 +101,15 @@ def smooth_move_visual_cursor_to(
 ):
     """
     Smoothly moves the visual cursor to a specific point, with constant
-    movement speed.
+    movement speed. Waits for the movement animation to complete before returning.
 
     Args:
         x: target location X coordinate (in viewport pixels)
         y: target location Y coordinate (in viewport pixels)
         speed: cursor speed (in pixels per second)
     """
+    logger.debug(f"smooth_move_visual_cursor_to: target=({x}, {y}), speed={speed}")
+
     movement_time = page.evaluate(
         """\
     ([targetX, targetY, speed]) => {
@@ -194,11 +199,22 @@ def smooth_move_visual_cursor_to(
             step += 1;
         }, step_wait_time);
 
+        // Store the final target position for verification
+        window.browsergym_visual_cursor_target = {x: targetX, y: targetY};
+
         return movement_time;
     }""",
         [x, y, speed],
     )
-    page.wait_for_timeout(movement_time)
+
+    # Wait for the movement animation to complete
+    # Add a small buffer (50ms) to account for JavaScript timing variations
+    wait_time = movement_time + 50
+    logger.debug(
+        f"smooth_move_visual_cursor_to: movement_time={movement_time}ms, "
+        f"waiting={wait_time}ms"
+    )
+    page.wait_for_timeout(wait_time)
 
 
 def check_for_overlay(
@@ -313,5 +329,10 @@ def map_coordinates(page, x, y):
     # Scale down coordinates to match actual page coordinate system
     mapped_x = x / scale_factor
     mapped_y = y / scale_factor
+
+    logger.debug(
+        f"map_coordinates: input=({x}, {y}), scale_factor={scale_factor}, "
+        f"output=({mapped_x}, {mapped_y})"
+    )
 
     return mapped_x, mapped_y
