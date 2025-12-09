@@ -508,6 +508,11 @@ Only a single action can be provided at once."""
         for function_name, function_args in function_calls:
             if function_name not in self.action_set:
                 raise NameError(f"Invalid action type '{function_name}'.")
+
+            # Add automatic delay before fill actions to prevent rate limiting
+            if function_name == "fill":
+                python_code += "noop(2000)\n"
+
             python_code += (
                 function_name + "(" + ", ".join([repr(arg) for arg in function_args]) + ")\n"
             )
