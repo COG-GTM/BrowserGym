@@ -1359,5 +1359,103 @@ def test_iframe_bid():
     env.close()
 
 
+def test_fill_action_auto_delay_injection():
+    """Test that fill() actions automatically have a noop(2000) injected before them."""
+    action_set = HighLevelActionSet()
+
+    # Test single fill action gets delay injected
+    action = 'fill("a1", "test value")'
+    python_code = action_set.to_python_code(action)
+
+    # Should contain noop(2000) before fill
+    assert "noop(2000)" in python_code
+    # The noop should appear before the fill call
+    noop_pos = python_code.find("noop(2000)")
+    fill_pos = python_code.find("fill('a1', 'test value')")
+    assert noop_pos < fill_pos, "noop(2000) should appear before fill()"
+
+
+def test_fill_action_delay_does_not_affect_other_actions():
+    """Test that other actions like click(), scroll(), etc. are not affected by delay injection."""
+    action_set = HighLevelActionSet()
+
+    # Test click action - should NOT have delay
+    action = 'click("a1")'
+    python_code = action_set.to_python_code(action)
+    # Count noop occurrences - should only be the function definition, not a call before click
+    assert python_code.count("noop(2000)") == 0
+
+    # Test scroll action - should NOT have delay
+    action = "scroll(0, 200)"
+    python_code = action_set.to_python_code(action)
+    assert python_code.count("noop(2000)") == 0
+
+    # Test hover action - should NOT have delay
+    action = 'hover("b1")'
+    python_code = action_set.to_python_code(action)
+    assert python_code.count("noop(2000)") == 0
+
+    # Test goto action - should NOT have delay
+    action = 'goto("https://example.com")'
+    python_code = action_set.to_python_code(action)
+    assert python_code.count("noop(2000)") == 0
+
+
+def test_multiple_fill_actions_each_get_delay():
+    """Test that multiple fill() actions in sequence each get their own delay."""
+    action_set = HighLevelActionSet()
+
+    # Test multiple fill actions
+    action = """fill("a1", "value1")
+fill("a2", "value2")
+fill("a3", "value3")"""
+    python_code = action_set.to_python_code(action)
+
+    # Should have 3 noop(2000) calls, one before each fill
+    assert python_code.count("noop(2000)") == 3
+
+    # Verify the pattern by checking the generated action calls at the end of the code
+    # The action calls are at the end after all function definitions
+    # Pattern should be: noop(2000)\nfill(...)\nnoop(2000)\nfill(...)\nnoop(2000)\nfill(...)
+    action_calls_pattern = re.search(
+        r"noop\(2000\)\nfill\('a1', 'value1'\)\nnoop\(2000\)\nfill\('a2', 'value2'\)\nnoop\(2000\)\nfill\('a3', 'value3'\)",
+        python_code,
+    )
+    assert (
+        action_calls_pattern is not None
+    ), "Expected pattern of noop(2000) before each fill() call"
+
+
+def test_fill_action_delay_with_mixed_actions():
+    """Test that fill() gets delay but other actions in the same sequence don't."""
+    action_set = HighLevelActionSet()
+
+    # Test mixed actions
+    action = """click("a1")
+fill("a2", "test")
+scroll(0, 100)
+fill("a3", "another test")
+hover("a4")"""
+    python_code = action_set.to_python_code(action)
+
+    # Should have exactly 2 noop(2000) calls (one for each fill)
+    assert python_code.count("noop(2000)") == 2
+
+
+def test_fill_action_delay_generates_valid_python():
+    """Test that the generated Python code with delay injection is syntactically correct."""
+    action_set = HighLevelActionSet()
+
+    # Test that generated code is valid Python
+    action = 'fill("a1", "test value")'
+    python_code = action_set.to_python_code(action)
+
+    # This should not raise a SyntaxError
+    try:
+        ast.parse(python_code)
+    except SyntaxError as e:
+        pytest.fail(f"Generated Python code has syntax error: {e}")
+
+
 if __name__ == "__main__":
     test_scroll()
