@@ -367,10 +367,47 @@ def mouse_click(x: float, y: float, button: Literal["left", "middle", "right"] =
         mouse_click(56, 712.56, 'right')
     """
     x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+
+    # Try to get the element at the click coordinates for more robust clicking
+    try:
+        element_handle = page.evaluate_handle("([x, y]) => document.elementFromPoint(x, y)", [x, y])
+        # Check if we got a valid element (not null)
+        is_valid_element = page.evaluate(
+            "el => el !== null && el instanceof Element", element_handle
+        )
+    except Exception:
+        element_handle = None
+        is_valid_element = False
+
     if demo_mode != "off":
-        smooth_move_visual_cursor_to(page, x, y)
-        highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
-    page.mouse.click(x, y, button=button)
+        if is_valid_element:
+            # Use element's bounding box for more accurate visual feedback
+            try:
+                box = element_handle.as_element().bounding_box()
+                if box:
+                    center_x = box["x"] + box["width"] / 2
+                    center_y = box["y"] + box["height"] / 2
+                    smooth_move_visual_cursor_to(page, center_x, center_y)
+                    highlight_by_box(page, box)
+                else:
+                    smooth_move_visual_cursor_to(page, x, y)
+                    highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
+            except Exception:
+                smooth_move_visual_cursor_to(page, x, y)
+                highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
+        else:
+            smooth_move_visual_cursor_to(page, x, y)
+            highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
+
+    # Use element-based click if we have a valid element, otherwise fall back to mouse click
+    if is_valid_element:
+        try:
+            element_handle.as_element().click(button=button, timeout=500)
+        except Exception:
+            # Fall back to raw mouse click if element click fails
+            page.mouse.click(x, y, button=button)
+    else:
+        page.mouse.click(x, y, button=button)
 
 
 # https://playwright.dev/python/docs/api/class-mouse#mouse-dblclick
@@ -384,10 +421,47 @@ def mouse_dblclick(x: float, y: float, button: Literal["left", "middle", "right"
         mouse_dblclick(87.5, 354, 'right')
     """
     x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+
+    # Try to get the element at the click coordinates for more robust clicking
+    try:
+        element_handle = page.evaluate_handle("([x, y]) => document.elementFromPoint(x, y)", [x, y])
+        # Check if we got a valid element (not null)
+        is_valid_element = page.evaluate(
+            "el => el !== null && el instanceof Element", element_handle
+        )
+    except Exception:
+        element_handle = None
+        is_valid_element = False
+
     if demo_mode != "off":
-        smooth_move_visual_cursor_to(page, x, y)
-        highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
-    page.mouse.dblclick(x, y, button=button)
+        if is_valid_element:
+            # Use element's bounding box for more accurate visual feedback
+            try:
+                box = element_handle.as_element().bounding_box()
+                if box:
+                    center_x = box["x"] + box["width"] / 2
+                    center_y = box["y"] + box["height"] / 2
+                    smooth_move_visual_cursor_to(page, center_x, center_y)
+                    highlight_by_box(page, box)
+                else:
+                    smooth_move_visual_cursor_to(page, x, y)
+                    highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
+            except Exception:
+                smooth_move_visual_cursor_to(page, x, y)
+                highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
+        else:
+            smooth_move_visual_cursor_to(page, x, y)
+            highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
+
+    # Use element-based dblclick if we have a valid element, otherwise fall back to mouse dblclick
+    if is_valid_element:
+        try:
+            element_handle.as_element().dblclick(button=button, timeout=500)
+        except Exception:
+            # Fall back to raw mouse dblclick if element dblclick fails
+            page.mouse.dblclick(x, y, button=button)
+    else:
+        page.mouse.dblclick(x, y, button=button)
 
 
 def mouse_drag_and_drop(from_x: float, from_y: float, to_x: float, to_y: float):
