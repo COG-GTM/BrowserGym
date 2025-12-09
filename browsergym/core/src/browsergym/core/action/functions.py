@@ -1,5 +1,6 @@
 # these are placeholders
 # all these symbols will be available in browsergym actions
+import logging
 from typing import Literal
 
 import playwright.sync_api
@@ -12,6 +13,8 @@ from .utils import (
     map_coordinates,
     smooth_move_visual_cursor_to,
 )
+
+logger = logging.getLogger(__name__)
 
 page: playwright.sync_api.Page = None
 send_message_to_user: callable = None
@@ -314,7 +317,9 @@ def mouse_move(x: float, y: float):
     Examples:
         mouse_move(65.2, 158.5)
     """
+    original_x, original_y = x, y
     x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+    logger.debug(f"mouse_move: original=({original_x}, {original_y}), mapped=({x}, {y})")
     if demo_mode != "off":
         smooth_move_visual_cursor_to(page, x, y)
     page.mouse.move(x, y)
@@ -330,7 +335,12 @@ def mouse_up(x: float, y: float, button: Literal["left", "middle", "right"] = "l
         mouse_up(250, 120)
         mouse_up(47, 252, 'right')
     """
+    original_x, original_y = x, y
     x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+    logger.debug(
+        f"mouse_up: original=({original_x}, {original_y}), "
+        f"mapped=({x}, {y}), button={button}"
+    )
     if demo_mode != "off":
         smooth_move_visual_cursor_to(page, x, y)
         highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
@@ -348,7 +358,12 @@ def mouse_down(x: float, y: float, button: Literal["left", "middle", "right"] = 
         mouse_down(140.2, 580.1)
         mouse_down(458, 254.5, 'middle')
     """
+    original_x, original_y = x, y
     x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+    logger.debug(
+        f"mouse_down: original=({original_x}, {original_y}), "
+        f"mapped=({x}, {y}), button={button}"
+    )
     if demo_mode != "off":
         smooth_move_visual_cursor_to(page, x, y)
         highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
@@ -366,10 +381,18 @@ def mouse_click(x: float, y: float, button: Literal["left", "middle", "right"] =
         mouse_click(887.2, 68)
         mouse_click(56, 712.56, 'right')
     """
+    original_x, original_y = x, y
     x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+    logger.debug(
+        f"mouse_click: original=({original_x}, {original_y}), "
+        f"mapped=({x}, {y}), button={button}"
+    )
     if demo_mode != "off":
         smooth_move_visual_cursor_to(page, x, y)
         highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
+    # Move mouse to position first to ensure cursor is at the correct location
+    page.mouse.move(x, y)
+    logger.debug(f"mouse_click: executing click at ({x}, {y})")
     page.mouse.click(x, y, button=button)
 
 
@@ -383,10 +406,18 @@ def mouse_dblclick(x: float, y: float, button: Literal["left", "middle", "right"
         mouse_dblclick(5, 236)
         mouse_dblclick(87.5, 354, 'right')
     """
+    original_x, original_y = x, y
     x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+    logger.debug(
+        f"mouse_dblclick: original=({original_x}, {original_y}), "
+        f"mapped=({x}, {y}), button={button}"
+    )
     if demo_mode != "off":
         smooth_move_visual_cursor_to(page, x, y)
         highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
+    # Move mouse to position first to ensure cursor is at the correct location
+    page.mouse.move(x, y)
+    logger.debug(f"mouse_dblclick: executing double click at ({x}, {y})")
     page.mouse.dblclick(x, y, button=button)
 
 
@@ -399,8 +430,15 @@ def mouse_drag_and_drop(from_x: float, from_y: float, to_x: float, to_y: float):
     Examples:
         mouse_drag_and_drop(10.7, 325, 235.6, 24.54)
     """
+    original_from_x, original_from_y = from_x, from_y
+    original_to_x, original_to_y = to_x, to_y
     from_x, from_y = map_coordinates(page, from_x, from_y)  # map coordinates to page coordinates
     to_x, to_y = map_coordinates(page, to_x, to_y)  # map coordinates to page coordinates
+    logger.debug(
+        f"mouse_drag_and_drop: original_from=({original_from_x}, {original_from_y}), "
+        f"original_to=({original_to_x}, {original_to_y}), "
+        f"mapped_from=({from_x}, {from_y}), mapped_to=({to_x}, {to_y})"
+    )
 
     if demo_mode != "off":
         x, y = from_x, from_y
@@ -646,11 +684,18 @@ def mouse_upload_file(x: float, y: float, file: str | list[str]):
         mouse_upload_file(132.1, 547, "my_receipt.pdf")
         mouse_upload_file(328, 812, ["/home/bob/Documents/image.jpg", "/home/bob/Documents/file.zip"])
     """
+    original_x, original_y = x, y
     x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+    logger.debug(
+        f"mouse_upload_file: original=({original_x}, {original_y}), "
+        f"mapped=({x}, {y}), file={file}"
+    )
     if demo_mode != "off":
         smooth_move_visual_cursor_to(page, x, y)
         highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
 
+    # Move mouse to position first to ensure cursor is at the correct location
+    page.mouse.move(x, y)
     with page.expect_file_chooser() as fc_info:
         page.mouse.click(x, y)
 

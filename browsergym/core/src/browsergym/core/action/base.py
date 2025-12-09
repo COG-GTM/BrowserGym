@@ -1,9 +1,13 @@
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
 import playwright.sync_api
 
 from . import get_global_demo_mode
+
+# Create a logger for action functions that will be available in the exec context
+action_logger = logging.getLogger("browsergym.core.action.functions")
 
 
 class AbstractActionSet(ABC):
@@ -68,6 +72,7 @@ def execute_python_code(
         "send_message_to_user": send_message_to_user,
         "report_infeasible_instructions": report_infeasible_instructions,
         "DEMO_MODE": get_global_demo_mode(),
+        "logger": action_logger,
     }
 
     exec(code, globals)
