@@ -1359,5 +1359,117 @@ def test_iframe_bid():
     env.close()
 
 
+def test_fill_action_delay_injection():
+    """Test that fill() actions automatically have a noop(2000) delay injected before them."""
+    action_set = HighLevelActionSet()
+
+    action = 'fill("a1", "test value")'
+    python_code = action_set.to_python_code(action)
+
+    assert "noop(2000)" in python_code
+    assert python_code.index("noop(2000)") < python_code.index("fill('a1', 'test value')")
+
+    assert ast.parse(python_code)
+
+
+def test_fill_action_delay_injection_multiple():
+    """Test that multiple fill() actions each get their own noop(2000) delay."""
+    action_set = HighLevelActionSet()
+
+    action = """fill("a1", "first value")
+fill("b2", "second value")
+fill("c3", "third value")"""
+    python_code = action_set.to_python_code(action)
+
+    assert python_code.count("noop(2000)") == 3
+
+    lines = python_code.strip().split("\n")
+    fill_call_lines = [line for line in lines if line.startswith("fill(") and "'" in line]
+    assert len(fill_call_lines) == 3
+
+    fill_indices = [i for i, line in enumerate(lines) if line.startswith("fill(") and "'" in line]
+    noop_indices = [i for i, line in enumerate(lines) if line == "noop(2000)"]
+
+    for fill_idx, noop_idx in zip(fill_indices, noop_indices):
+        assert noop_idx == fill_idx - 1
+
+    assert ast.parse(python_code)
+
+
+def test_other_actions_no_delay_injection():
+    """Test that non-fill actions (click, scroll, etc.) do not get delay injection."""
+    action_set = HighLevelActionSet()
+
+    action = 'click("a1")'
+    python_code = action_set.to_python_code(action)
+    assert "noop(2000)" not in python_code
+    assert "click('a1')" in python_code
+
+    action = "scroll(0, 200)"
+    python_code = action_set.to_python_code(action)
+    assert "noop(2000)" not in python_code
+    assert "scroll(0, 200)" in python_code
+
+    action = 'goto("https://example.com")'
+    python_code = action_set.to_python_code(action)
+    assert "noop(2000)" not in python_code
+    assert "goto('https://example.com')" in python_code
+
+    action = 'hover("b5")'
+    python_code = action_set.to_python_code(action)
+    assert "noop(2000)" not in python_code
+    assert "hover('b5')" in python_code
+
+    action = 'send_msg_to_user("hello")'
+    python_code = action_set.to_python_code(action)
+    assert "noop(2000)" not in python_code
+    assert "send_msg_to_user('hello')" in python_code
+
+
+def test_mixed_actions_only_fill_gets_delay():
+    """Test that in a sequence of mixed actions, only fill() gets the delay."""
+    action_set = HighLevelActionSet()
+
+    action = """click("a1")
+fill("b2", "some text")
+scroll(0, 100)
+fill("c3", "more text")
+hover("d4")"""
+    python_code = action_set.to_python_code(action)
+
+    assert python_code.count("noop(2000)") == 2
+
+    lines = python_code.strip().split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("fill("):
+            assert lines[i - 1] == "noop(2000)"
+
+    for i, line in enumerate(lines):
+        if line.startswith(("click(", "scroll(", "hover(")):
+            if i > 0:
+                assert lines[i - 1] != "noop(2000)" or lines[i - 1].startswith("fill(")
+
+    assert ast.parse(python_code)
+
+
+def test_fill_delay_code_is_executable():
+    """Test that the generated Python code with delay injection is syntactically correct."""
+    action_set = HighLevelActionSet()
+
+    test_cases = [
+        'fill("a1", "simple")',
+        'fill("b2", "with spaces")',
+        'fill("c3", "with\\nnewline")',
+        'fill("d4", "with \\"quotes\\"")',
+        'fill("e5", "value", True)',
+    ]
+
+    for action in test_cases:
+        python_code = action_set.to_python_code(action)
+        assert "noop(2000)" in python_code
+        parsed = ast.parse(python_code)
+        assert parsed is not None
+
+
 if __name__ == "__main__":
     test_scroll()
