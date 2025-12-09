@@ -1081,7 +1081,7 @@ def test_scroll():
     top_x, top_y = extract_coords_from_elem(top)
     bottom_x, bottom_y = extract_coords_from_elem(bottom)
 
-    # click bottom
+    # click bottom (outside viewport)
     action = f"mouse_click({repr(bottom_x)}, {repr(bottom_y)})"
 
     obs, reward, terminated, truncated, info = env.step(action)
@@ -1090,11 +1090,12 @@ def test_scroll():
     top_x, top_y = extract_coords_from_elem(top)
     bottom_x, bottom_y = extract_coords_from_elem(bottom)
 
-    # no error (click coordinates out of viewport is a silent fail in playwright)
-    assert not obs["last_action_error"]
+    # error (click coordinates out of viewport should raise an error)
+    assert "ValueError" in obs["last_action_error"]
+    assert "outside viewport bounds" in obs["last_action_error"]
     # top checked
     assert top.has_attr("checked")
-    # bottom not checked (click didn't go through)
+    # bottom not checked (click didn't go through due to error)
     assert not bottom.has_attr("checked")
 
     # scroll up
