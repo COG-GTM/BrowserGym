@@ -315,3 +315,22 @@ def map_coordinates(page, x, y):
     mapped_y = y / scale_factor
 
     return mapped_x, mapped_y
+
+
+def validate_viewport_coordinates(page, x, y):
+    """
+    Validates that coordinates are within the viewport bounds.
+
+    Args:
+        page: Playwright page object
+        x: X coordinate
+        y: Y coordinate
+
+    Raises:
+        ValueError: If coordinates are outside viewport
+    """
+    viewport = page.viewport_size
+    if x < 0 or y < 0 or x > viewport["width"] or y > viewport["height"]:
+        raise ValueError(
+            f"Coordinates ({x}, {y}) are outside viewport bounds (0, 0) to ({viewport['width']}, {viewport['height']})"
+        )

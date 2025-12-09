@@ -11,6 +11,7 @@ from .utils import (
     highlight_by_box,
     map_coordinates,
     smooth_move_visual_cursor_to,
+    validate_viewport_coordinates,
 )
 
 page: playwright.sync_api.Page = None
@@ -315,6 +316,7 @@ def mouse_move(x: float, y: float):
         mouse_move(65.2, 158.5)
     """
     x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+    validate_viewport_coordinates(page, x, y)
     if demo_mode != "off":
         smooth_move_visual_cursor_to(page, x, y)
     page.mouse.move(x, y)
@@ -331,6 +333,7 @@ def mouse_up(x: float, y: float, button: Literal["left", "middle", "right"] = "l
         mouse_up(47, 252, 'right')
     """
     x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+    validate_viewport_coordinates(page, x, y)
     if demo_mode != "off":
         smooth_move_visual_cursor_to(page, x, y)
         highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
@@ -349,6 +352,7 @@ def mouse_down(x: float, y: float, button: Literal["left", "middle", "right"] = 
         mouse_down(458, 254.5, 'middle')
     """
     x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+    validate_viewport_coordinates(page, x, y)
     if demo_mode != "off":
         smooth_move_visual_cursor_to(page, x, y)
         highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
@@ -367,6 +371,7 @@ def mouse_click(x: float, y: float, button: Literal["left", "middle", "right"] =
         mouse_click(56, 712.56, 'right')
     """
     x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+    validate_viewport_coordinates(page, x, y)
     if demo_mode != "off":
         smooth_move_visual_cursor_to(page, x, y)
         highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
@@ -384,6 +389,7 @@ def mouse_dblclick(x: float, y: float, button: Literal["left", "middle", "right"
         mouse_dblclick(87.5, 354, 'right')
     """
     x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+    validate_viewport_coordinates(page, x, y)
     if demo_mode != "off":
         smooth_move_visual_cursor_to(page, x, y)
         highlight_by_box(page, {"x": x, "y": y, "width": 1, "height": 1})
