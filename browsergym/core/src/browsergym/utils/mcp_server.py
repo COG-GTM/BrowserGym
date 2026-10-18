@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import re
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Callable
@@ -21,6 +22,15 @@ class BgymConfig:
     record_video_dir: str | None = None
     demo_mode: HighLevelActionSet.DemoMode = "default"
     validate_actions: list[str] = field(default_factory=list)
+
+
+# Playwright's sync API is bound to the thread that created it: run every gym call on one thread
+_gym_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="browsergym")
+
+
+async def _run_in_gym_thread(func: Callable, /, *args, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_gym_executor, lambda: func(*args, **kwargs))
 
 
 @dataclass
@@ -105,7 +115,7 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     """Manage application lifecycle with type-safe context"""
     # Initialize on startup
     actions = HighLevelActionSet(demo_mode=config.demo_mode, subsets=args.subset)
-    _gym: BrowserEnv = await asyncio.to_thread(
+    _gym: BrowserEnv = await _run_in_gym_thread(
         gym.make,
         task_id,
         headless=config.headless,
@@ -114,13 +124,13 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         timeout=config.timeout_ms,
         task_kwargs={"start_url": "about:blank"},
     )  # type: ignore
-    await asyncio.to_thread(_gym.reset)
+    await _run_in_gym_thread(_gym.reset)
 
     try:
         yield AppContext(gym=_gym, config=config, task_id=task_id, actions=actions)
     finally:
         # Cleanup on shutdown
-        await asyncio.to_thread(_gym.close)
+        await _run_in_gym_thread(_gym.close)
 
 
 mcp = FastMCP("BrowserGym", lifespan=app_lifespan)
@@ -156,7 +166,7 @@ def fn_wrapper(func: Callable, validate: bool = True):
         fn = getattr(fn_context, func.__name__)
 
         gym.last_action = format_func_call(fn, args, kwargs)
-        info, send_message_to_user, report_infeasible_instructions = await asyncio.to_thread(
+        info, send_message_to_user, report_infeasible_instructions = await _run_in_gym_thread(
             gym.pre_step
         )
 
@@ -167,7 +177,7 @@ def fn_wrapper(func: Callable, validate: bool = True):
         fn_context.demo_mode = config.demo_mode
 
         try:
-            fn(*args, **kwargs)
+            await _run_in_gym_thread(fn, *args, **kwargs)
             gym.last_action_error = ""
         except Exception as e:
             gym.last_action_error = f"{type(e).__name__}: {e}"
@@ -175,7 +185,7 @@ def fn_wrapper(func: Callable, validate: bool = True):
             if match:
                 info["action_exec_timeout"] = float(match.groups()[0]) / 1000
 
-        results = await asyncio.to_thread(gym.post_step, info, validate)
+        results = await _run_in_gym_thread(gym.post_step, info, validate)
         return results
 
     decorator.__wrapped__ = func  # type: ignore
