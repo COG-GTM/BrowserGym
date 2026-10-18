@@ -1,6 +1,7 @@
 import logging
 import multiprocessing as mp
 import os
+import time
 import traceback
 from queue import Empty
 import typing
@@ -278,25 +279,45 @@ def massage_task_within_subprocess(
     queue = mp.Queue()
     process = mp.Process(target=run_massage, args=(queue, task_id))
     process.start()
-    process.join(timeout=timeout)
 
-    if process.is_alive():
+    # read the queue while the child runs: a large outcome blocks the child's queue feeder
+    # thread (and hence its exit) until the parent drains the pipe
+    outcome = None
+    deadline = time.monotonic() + timeout
+    while outcome is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            outcome = queue.get(timeout=min(remaining, 1.0))
+        except Empty:
+            if not process.is_alive():
+                try:
+                    outcome = queue.get(timeout=1.0)
+                except Empty:
+                    pass
+                break
+
+    if outcome is None and not process.is_alive():
+        outcome = (
+            "exception",
+            f"Massage sub-process exited with code {process.exitcode} without reporting an outcome",
+        )
+
+    if outcome is None:
         # if the process is still alive after the timeout
         outcome = "timeout", f"Timeout {timeout} seconds exceeded"
         process.kill()
+    else:
         process.join(timeout=kill_timeout)
         if process.is_alive():
-            # if the process is still alive after the kill
-            logger.warning(
-                f"Massage sub-process still alive {kill_timeout} seconds after kill(), you might have a zombie process now."
-            )
-    else:
-        try:
-            outcome = queue.get(timeout=kill_timeout)
-        except Empty:
-            outcome = (
-                "exception",
-                f"Massage sub-process exited with code {process.exitcode} without reporting an outcome",
-            )
+            process.kill()
+
+    process.join(timeout=kill_timeout)
+    if process.is_alive():
+        # if the process is still alive after the kill
+        logger.warning(
+            f"Massage sub-process still alive {kill_timeout} seconds after kill(), you might have a zombie process now."
+        )
 
     return outcome

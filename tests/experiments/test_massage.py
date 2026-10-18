@@ -90,3 +90,34 @@ def test_massage_tasks_continues_after_failure(monkeypatch):
     monkeypatch.setattr(benchmark_utils, "massage_task_within_subprocess", spy)
     massage_tasks(["massage-test.make-fails", "massage-test.ok"], max_retries=1)
     assert calls == ["massage-test.make-fails"] * 2 + ["massage-test.ok"]
+
+
+class _HugeErrorEnv(_MassageTestEnv):
+    def reset(self, seed=None, options=None):
+        raise RuntimeError("massage-test: huge error " + "x" * 1_000_000)
+
+
+gym.register(
+    id="browsergym/massage-test.huge-error",
+    entry_point=_HugeErrorEnv,
+    disable_env_checker=True,
+    order_enforce=False,
+)
+
+
+def test_massage_large_error_is_not_reported_as_timeout():
+    outcome, err_msg = massage_task_within_subprocess("massage-test.huge-error", timeout=10)
+    assert outcome == "exception"
+    assert "massage-test: huge error" in err_msg
+
+
+def _hang(outcome_queue, task_id):
+    import time
+
+    time.sleep(60)
+
+
+def test_massage_timeout(monkeypatch):
+    monkeypatch.setattr(benchmark_utils, "run_massage", _hang)
+    outcome, _ = massage_task_within_subprocess("massage-test.ok", timeout=2, kill_timeout=2)
+    assert outcome == "timeout"
