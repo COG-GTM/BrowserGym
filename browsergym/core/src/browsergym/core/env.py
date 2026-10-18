@@ -547,7 +547,22 @@ document.addEventListener("visibilitychange", () => {
         prev_active_page = self.page
         prev_page_history = self.page_history.copy()
         # call validate
-        reward, done, user_message, info = self.task.validate(self.page, self.chat.messages)
+        try:
+            reward, done, user_message, info = self.task.validate(self.page, self.chat.messages)
+        except playwright.sync_api.Error as e:
+            if not self._is_page_lost_error(str(e)):
+                raise
+            # the active page crashed or got closed during validation, recover another page
+            # validation is not re-run (it might not be idempotent), the step gets no reward
+            logger.warning(
+                f"The active page crashed or was closed during task validation. Recovering.\n{repr(e)}"
+            )
+            if "Target crashed" in str(e):
+                self.crashed_pages.add(self.page)
+            self.page = prev_active_page
+            self.page_history = prev_page_history
+            self._active_page_check()
+            return 0, False, None, {"task_validation_error": repr(e)}
 
         # safety fix, in case validate() did mess up the active page and/or page history
         if prev_active_page != self.page or prev_page_history != self.page_history:
@@ -612,6 +627,14 @@ document.addEventListener("visibilitychange", () => {
             and page not in self.crashed_pages
             and not page.is_closed()
             and page in self.context.pages
+        )
+
+    def _is_page_lost_error(self, err_msg: str) -> bool:
+        return (
+            "Target crashed" in err_msg
+            or "Target page, context or browser has been closed" in err_msg
+            or "Target closed" in err_msg
+            or not self._is_page_usable(self.page)
         )
 
     def _close_crashed_pages(self):
@@ -703,15 +726,15 @@ document.addEventListener("visibilitychange", () => {
                 focused_element_bid = extract_focused_element_bid(self.page)
                 scale_factor = getattr(self.page, "_bgym_scale_factor", 1.0)
                 extra_properties = extract_dom_extra_properties(dom, scale_factor=scale_factor)
+
+                # post-extraction cleanup of temporary info in dom
+                _post_extract(self.page)
+
+                screenshot = extract_screenshot(self.page)
             except (playwright.sync_api.Error, MarkingError) as e:
                 err_msg = str(e)
                 # the active page crashed or got closed, recover another page and retry
-                if retries_left > 0 and (
-                    "Target crashed" in err_msg
-                    or "Target page, context or browser has been closed" in err_msg
-                    or "Target closed" in err_msg
-                    or not self._is_page_usable(self.page)
-                ):
+                if retries_left > 0 and self._is_page_lost_error(err_msg):
                     logger.warning(
                         f"The active page crashed or was closed while extracting the observation. Recovering ({retries_left}/{EXTRACT_OBS_MAX_TRIES} tries left).\n{repr(e)}"
                     )
@@ -739,9 +762,6 @@ document.addEventListener("visibilitychange", () => {
                     raise e
             break
 
-        # post-extraction cleanup of temporary info in dom
-        _post_extract(self.page)
-
         # obs is generic to all tasks
         obs = {
             "chat_messages": tuple(copy.deepcopy(self.chat.messages)),
@@ -753,7 +773,7 @@ document.addEventListener("visibilitychange", () => {
             "open_pages_titles": self._get_open_pages_titles(),
             "active_page_index": np.asarray([self.context.pages.index(self.page)]),
             "url": self.page.url,  # redundant with "open_pages_urls" and "active_page_index"
-            "screenshot": extract_screenshot(self.page),
+            "screenshot": screenshot,
             "dom_object": dom,
             "axtree_object": axtree,
             "extra_element_properties": extra_properties,

@@ -407,6 +407,90 @@ def test_open_pages_titles_tolerates_failing_pages():
     assert env._get_open_pages_titles() == ("active", "", "")
 
 
+class _FakeChat:
+    messages = []
+
+
+class _RaisingTask:
+    def __init__(self, error):
+        self.error = error
+        self.calls = 0
+
+    def validate(self, page, chat_messages):
+        self.calls += 1
+        raise playwright.sync_api.Error(self.error)
+
+
+def test_task_validate_crashed_page_recovers_without_reward():
+    crashed_page, other_page = _FakePage(), _FakePage()
+    env = _make_unwrapped_env([other_page, crashed_page])
+    env.page = crashed_page
+    env.page_history = {other_page: None, crashed_page: None}
+    env.chat = _FakeChat()
+    env.task = _RaisingTask("Page.evaluate: Target crashed")
+
+    reward, done, user_message, info = env._task_validate()
+
+    assert (reward, done, user_message) == (0, False, None)
+    assert "Target crashed" in info["task_validation_error"]
+    assert env.task.calls == 1  # validation is not re-run
+    assert crashed_page.is_closed()
+    assert env.page is other_page
+
+
+def test_task_validate_other_errors_are_raised():
+    page = _FakePage()
+    env = _make_unwrapped_env([page])
+    env.page = page
+    env.page_history = {page: None}
+    env.chat = _FakeChat()
+    env.task = _RaisingTask("Page.evaluate: ReferenceError: foo is not defined")
+
+    with pytest.raises(playwright.sync_api.Error):
+        env._task_validate()
+
+
+def test_crash_during_post_extract_recovers(monkeypatch):
+    post_extract = browsergym.core.env._post_extract
+    crashed = []
+
+    def crashing_post_extract(page):
+        # crash the renderer after the dom / axtree have been extracted
+        if not crashed:
+            crashed.append(page)
+            try:
+                page.goto("chrome://crash")
+            except Exception:
+                pass
+        return post_extract(page)
+
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": TEST_PAGE},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        timeout=__TIMEOUT,
+    )
+    env.reset()
+    first_page = env.unwrapped.page
+    second_page = env.unwrapped.context.new_page()
+    second_page.goto(TEST_PAGE)
+    env.unwrapped.page = second_page
+    env.unwrapped.page_history[second_page] = None
+
+    monkeypatch.setattr(browsergym.core.env, "_post_extract", crashing_post_extract)
+    obs = env.unwrapped._get_obs()
+
+    assert crashed == [second_page] and second_page.is_closed()
+    assert env.unwrapped.page is first_page
+    assert len(obs["open_pages_urls"]) == 1
+    assert obs["url"] == TEST_PAGE
+    assert obs["axtree_object"]
+    assert obs["screenshot"].size > 0
+
+    env.close()
+
+
 def test_crashed_active_page_recovery():
     action_set = PythonActionSet()
     env = gym.make(
