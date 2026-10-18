@@ -76,7 +76,9 @@ class Benchmark(DataClassJsonMixin):
     def __post_init__(self):
         # if no metadata is present, generate a dataframe with single "task_name" column
         if self.task_metadata is None:
-            unique_task_names = list(set([env_args.task_name for env_args in self.env_args_list]))
+            unique_task_names = list(
+                dict.fromkeys(env_args.task_name for env_args in self.env_args_list)
+            )
             self.task_metadata = pd.DataFrame(
                 [{"task_name": task_name} for task_name in unique_task_names]
             )
@@ -197,7 +199,8 @@ class Benchmark(DataClassJsonMixin):
     def subset_from_task_ratio(self, ratio, seed):
         """Get a random subset of the tasks given a ratio and seed."""
         rng = random.Random(seed)
-        task_names = list(set([env_args.task_name for env_args in self.env_args_list]))
+        # sort before shuffling, set iteration order depends on PYTHONHASHSEED
+        task_names = sorted(set(env_args.task_name for env_args in self.env_args_list))
         rng.shuffle(task_names)
         num_tasks = int(len(task_names) * ratio)
         task_name_subset = task_names[:num_tasks]
@@ -218,7 +221,7 @@ class Benchmark(DataClassJsonMixin):
 
     def dependency_graph_over_tasks(self) -> dict[str, list[str]]:
         # recover all unique task_names present in the benchmark
-        task_names = list(set([env_args.task_name for env_args in self.env_args_list]))
+        task_names = list(dict.fromkeys(env_args.task_name for env_args in self.env_args_list))
 
         # if "depends_on" column is missing, raise a warning and deal with it
         # (we don't want the "depends_on" column to be mandatory)
