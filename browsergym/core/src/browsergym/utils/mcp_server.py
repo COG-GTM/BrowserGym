@@ -1,7 +1,6 @@
 # MCP server for BrowserGym
 import argparse
 import asyncio
-import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -11,7 +10,7 @@ import gymnasium as gym
 from mcp.server.fastmcp import FastMCP
 
 from browsergym.core.action.highlevel import ACTION_SUBSETS, HighLevelActionSet
-from browsergym.core.env import BrowserEnv
+from browsergym.core.env import BrowserEnv, get_action_exec_timeout
 
 
 @dataclass
@@ -171,9 +170,9 @@ def fn_wrapper(func: Callable, validate: bool = True):
             gym.last_action_error = ""
         except Exception as e:
             gym.last_action_error = f"{type(e).__name__}: {e}"
-            match = re.match("TimeoutError: Timeout ([0-9]+)ms exceeded.", gym.last_action_error)
-            if match:
-                info["action_exec_timeout"] = float(match.groups()[0]) / 1000
+            timeout = get_action_exec_timeout(e)
+            if timeout is not None:
+                info["action_exec_timeout"] = timeout
 
         results = await asyncio.to_thread(gym.post_step, info, validate)
         return results
