@@ -3,6 +3,7 @@ import json
 import logging
 import pathlib
 import tempfile
+import traceback
 import urllib.parse
 from typing import Literal, Optional, Tuple
 
@@ -16,6 +17,12 @@ from .instance import VisualWebArenaInstance
 from .utils import image_url_to_pil_image, pil_image_to_data_uri
 
 logger = logging.getLogger(__name__)
+
+
+def _is_llm_fuzzy_match_assertion(error: AssertionError) -> bool:
+    """Whether the AssertionError comes from llm_fuzzy_match()'s `assert "correct" in response`."""
+    frames = traceback.extract_tb(error.__traceback__)
+    return bool(frames) and frames[-1].name == "llm_fuzzy_match"
 
 
 def _build_goal(config, with_na_hint: bool):
@@ -279,6 +286,7 @@ class GenericVisualWebArenaTask(AbstractBrowserTask):
         trajectory = [{}, last_action]  # StateInfo, Action
 
         # call the evaluator
+        task_info = {}
         try:
             score = self.evaluator(
                 trajectory=trajectory,
@@ -286,13 +294,20 @@ class GenericVisualWebArenaTask(AbstractBrowserTask):
                 page=page,  # none of webarena's evaluators requires a cdp session
             )
         # llm_fuzzy_match() bugfix (assert "correct" in response)
-        except AssertionError:
-            logger.debug(
-                "llm_fuzzy_match() bugfix applied: AssertionError in evaluator, using score = 0.0"
+        # any other AssertionError is a genuine evaluation failure and must not become a silent 0
+        except AssertionError as e:
+            if not _is_llm_fuzzy_match_assertion(e):
+                raise
+            logger.warning(
+                "llm_fuzzy_match() bugfix applied: unexpected LLM judge response, using score = 0.0",
+                exc_info=True,
             )
             score = 0.0
+            task_info["evaluation_error"] = "".join(
+                traceback.format_exception_only(type(e), e)
+            ).strip()
 
         if score > 0 or last_action["action_type"] == ActionTypes.STOP:
-            return score, True, "", {}
+            return score, True, "", task_info
         else:
-            return score, False, "", {}
+            return score, False, "", task_info
