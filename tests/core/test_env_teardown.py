@@ -61,6 +61,20 @@ def test_close_releases_everything_when_one_release_fails(failing):
     browser.close.assert_called_once()
 
 
+def test_close_releases_everything_then_reraises_interruption():
+    env = make_env()
+    task, chat, context, browser = install_resources(env)
+    task.teardown.side_effect = KeyboardInterrupt()
+
+    with pytest.raises(KeyboardInterrupt):
+        env.close()
+
+    chat.close.assert_called_once()
+    context.close.assert_called_once()
+    browser.close.assert_called_once()
+    assert_released(env)
+
+
 def test_close_on_partially_initialized_env():
     env = make_env()
     task = mock.MagicMock(name="task")
@@ -146,3 +160,17 @@ def test_chat_init_releases_browser_when_setup_fails():
             Chat(headless=True)
 
     browser.close.assert_called_once()
+
+
+def test_chat_close_releases_browser_then_reraises_interruption():
+    chat = Chat.__new__(Chat)
+    chat.context = mock.MagicMock(name="context")
+    chat.browser = mock.MagicMock(name="browser")
+    browser = chat.browser
+    chat.context.close.side_effect = KeyboardInterrupt()
+
+    with pytest.raises(KeyboardInterrupt):
+        chat.close()
+
+    browser.close.assert_called_once()
+    assert chat.context is None and chat.browser is None

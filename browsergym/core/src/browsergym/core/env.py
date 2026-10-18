@@ -207,8 +207,10 @@ class BrowserEnv(gym.Env, ABC):
 
         Each resource is released independently and set to None, so that a failure (or a
         partially initialized environment) never prevents the remaining resources from being
-        released, and the environment can always be reset again.
+        released, and the environment can always be reset again. An interruption (e.g.
+        KeyboardInterrupt) is re-raised once every resource has been released.
         """
+        interruption = None
         for attr, release in (
             ("task", "teardown"),  # stop the task
             ("chat", "close"),  # close the chat
@@ -222,11 +224,16 @@ class BrowserEnv(gym.Env, ABC):
                 getattr(resource, release)()
             except Exception:
                 logger.exception(f"Error while releasing the environment's {attr}, ignoring.")
+            except BaseException as e:
+                interruption = interruption or e
             finally:
                 setattr(self, attr, None)
 
         self.page = None
         self.page_history = {}
+
+        if interruption is not None:
+            raise interruption
 
     def close(self):
         self._teardown()

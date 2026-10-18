@@ -82,6 +82,7 @@ class Chat:
 
     def close(self):
         """Close the chat's browser context and browser, releasing both even if one fails."""
+        interruption = None
         for attr in ("context", "browser"):
             resource = getattr(self, attr, None)
             if resource is None:
@@ -90,8 +91,13 @@ class Chat:
                 resource.close()
             except Exception:
                 logger.exception(f"Error while closing the chat's {attr}, ignoring.")
+            except BaseException as e:
+                interruption = interruption or e
             finally:
                 setattr(self, attr, None)
+
+        if interruption is not None:
+            raise interruption
 
 
 def get_chatbox_modern(chatbox_dir) -> str:
