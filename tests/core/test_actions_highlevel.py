@@ -887,6 +887,32 @@ def test_fill_demo_mode_detached_element_times_out():
     env.close()
 
 
+# an empty demo-mode fill is complete after clear, even if the field got re-rendered
+def test_fill_demo_mode_empty_value_detached_element():
+    action_set = HighLevelActionSet(subsets=["bid"], demo_mode="default")
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": DETACHING_TEXTBOX_URL},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        timeout=__TIMEOUT,
+        action_mapping=action_set.to_python_code,
+    )
+
+    obs, info = env.reset()
+    soup = bs4.BeautifulSoup(flatten_dom_to_str(obs["dom_object"]), "lxml")
+    textbox = soup.find("input", attrs={"id": "textbox"})
+
+    obs, reward, terminated, truncated, info = env.step(f"fill({repr(textbox.get(BID_ATTR))}, '')")
+    soup = bs4.BeautifulSoup(flatten_dom_to_str(obs["dom_object"]), "lxml")
+    textbox = soup.find("input", attrs={"id": "textbox"})
+
+    assert not obs["last_action_error"]
+    assert textbox.get("value") == ""
+
+    env.close()
+
+
 def test_dblclick():
     action_set = HighLevelActionSet(subsets=["bid"])
 
