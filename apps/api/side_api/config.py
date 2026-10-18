@@ -29,6 +29,7 @@ class Settings:
     fake_runner: bool = False
     fake_step_delay: float = 0.5
     notify_url: str | None = None
+    notify_secret: str | None = None
     cors_origins: list[str] = field(default_factory=lambda: list(DEFAULT_CORS_ORIGINS))
     contract_path: Path | None = None
     poll_interval: float = 0.1
@@ -48,6 +49,7 @@ class Settings:
             fake_runner=_truthy(env.get("SIDE_FAKE_RUNNER")),
             fake_step_delay=float(env.get("SIDE_FAKE_STEP_DELAY", "0.5")),
             notify_url=(env.get("SIDE_NOTIFY_URL") or "").strip().rstrip("/") or None,
+            notify_secret=env.get("SIDE_NOTIFY_SECRET") or None,
             cors_origins=DEFAULT_CORS_ORIGINS + extra_origins,
             contract_path=Path(contract) if contract else None,
         )

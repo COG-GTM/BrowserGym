@@ -81,7 +81,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     (settings.data_dir / "runs").mkdir(exist_ok=True)
     engine = make_engine(settings.resolved_db_url)
-    manager = RunManager(settings, engine, Notifier(settings.notify_url))
+    manager = RunManager(
+        settings, engine, Notifier(settings.notify_url, secret=settings.notify_secret)
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):

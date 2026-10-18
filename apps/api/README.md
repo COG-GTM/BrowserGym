@@ -61,6 +61,7 @@ data: {"type":"status","run_id":"38af…","timestamp":"2026-10-18T02:42:26.553Z"
 | `SIDE_FAKE_STEP_DELAY` | `0.5` | Seconds between FakeRunner steps |
 | `SIDE_RUNNER_CMD` | `python -m side_runner` | Runner command prefix; runner-contract args are appended |
 | `SIDE_NOTIFY_URL` | unset | Empty/unset disables forwarding. If set, every `status` event is POSTed to `${SIDE_NOTIFY_URL}/internal/run-events`, and `POST /devices` is forwarded to `${SIDE_NOTIFY_URL}/api/v1/devices` |
+| `SIDE_NOTIFY_SECRET` | unset | If set, sent as `X-Side-Notify-Secret` on `/internal/run-events` POSTs (must match the notifications service) |
 | `SIDE_CORS_ORIGINS` | – | Extra comma-separated origins (localhost:3000 and Expo 8081/19000/19006 are always allowed) |
 | `SIDE_CONTRACT_PATH` | auto (`contracts/openapi.yaml` in an ancestor dir) | Contract served at `/api/v1/openapi.json` |
 

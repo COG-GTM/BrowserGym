@@ -11,8 +11,14 @@ log = logging.getLogger(__name__)
 class Notifier:
     """POSTs status RunEvents to ``${SIDE_NOTIFY_URL}/internal/run-events`` (fire-and-forget)."""
 
-    def __init__(self, base_url: str | None, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(
+        self,
+        base_url: str | None,
+        transport: httpx.AsyncBaseTransport | None = None,
+        secret: str | None = None,
+    ):
         self.base_url = base_url
+        self.secret = secret
         self.transport = transport
         self._pending: set[asyncio.Task] = set()
 
@@ -31,7 +37,8 @@ class Notifier:
         url = f"{self.base_url}/internal/run-events"
         try:
             async with httpx.AsyncClient(timeout=5.0, transport=self.transport) as client:
-                resp = await client.post(url, json=event)
+                headers = {"X-Side-Notify-Secret": self.secret} if self.secret else None
+                resp = await client.post(url, json=event, headers=headers)
                 if resp.status_code >= 400:
                     log.warning("notify %s -> HTTP %s", url, resp.status_code)
         except httpx.HTTPError as e:

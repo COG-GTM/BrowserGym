@@ -30,6 +30,7 @@ def test_status_events_posted_to_notify_url(make_api, settings, contract):
         contract.validate_schema("RunEvent", body)
         assert body["type"] == "status" and body["run_id"] == run["id"]
     assert [b["status"] for b in bodies] == ["queued", "running", "succeeded"]
+    assert all("x-side-notify-secret" not in r.headers for r in received)
 
 
 def test_notify_failures_do_not_break_runs(make_api, settings):
@@ -73,3 +74,26 @@ def test_empty_notify_url_disables_forwarding(monkeypatch):
         assert Settings.from_env().notify_url is None
     monkeypatch.setenv("SIDE_NOTIFY_URL", "http://notify:8001/")
     assert Settings.from_env().notify_url == "http://notify:8001"
+
+
+def test_notify_secret_sent_as_header(make_api, settings, monkeypatch):
+    received: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.append(request)
+        return httpx.Response(202)
+
+    monkeypatch.setenv("SIDE_NOTIFY_SECRET", "s3cret")
+    from side_api.config import Settings
+
+    assert Settings.from_env().notify_secret == "s3cret"
+    settings.notify_url = "http://notify.test"
+    settings.notify_secret = "s3cret"
+    api = make_api(settings)
+    api.client.app.state.manager.notifier.transport = httpx.MockTransport(handler)
+    api.wait_for(api.create_run()["id"])
+    deadline = time.monotonic() + 5
+    while len(received) < 3 and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert len(received) == 3
+    assert all(r.headers["x-side-notify-secret"] == "s3cret" for r in received)
