@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+
+<head>
+    <title>Delayed updates</title>
+    <meta charset="utf-8" />
+</head>
+
+<body>
+    <label for="search">Search:</label>
+    <input type="text" id="search" />
+    <ul id="suggestions"></ul>
+    <a href="example.html">Go to example</a>
+    <script>
+        // debounced auto-complete, rendered in two batches
+        const suggestions = document.getElementById("suggestions");
+        let debounce = null;
+        document.getElementById("search").addEventListener("input", () => {
+            clearTimeout(debounce);
+            debounce = setTimeout(() => {
+                suggestions.innerHTML = "<li>First suggestion</li>";
+                setTimeout(() => {
+                    suggestions.insertAdjacentHTML("beforeend", "<li>Second suggestion</li>");
+                }, 400);
+            }, 600);
+        });
+    </script>
+</body>
+
+</html>
