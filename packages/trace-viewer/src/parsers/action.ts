@@ -241,11 +241,7 @@ function parseCall(lx: Lexer): ParsedAction {
  * as produced by BrowserGym's multi-action mode. Comments (`# ...`) are ignored.
  */
 export function parseActions(source: string): ParsedAction[] {
-  const cleaned = source
-    .split("\n")
-    .map((line) => stripComment(line))
-    .join("\n");
-  const lx = new Lexer(cleaned);
+  const lx = new Lexer(stripComments(source));
   const out: ParsedAction[] = [];
   while (!lx.eof()) {
     out.push(parseCall(lx));
@@ -254,17 +250,35 @@ export function parseActions(source: string): ParsedAction[] {
   return out;
 }
 
-function stripComment(line: string): string {
+/** Remove `# ...` comments, tracking single/triple-quoted strings across lines. */
+function stripComments(source: string): string {
+  let out = "";
   let quote: string | null = null;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]!;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i]!;
     if (quote) {
-      if (ch === "\\") i++;
-      else if (ch === quote) quote = null;
-    } else if (ch === "'" || ch === '"') quote = ch;
-    else if (ch === "#") return line.slice(0, i);
+      if (ch === "\\") {
+        out += source.slice(i, i + 2);
+        i++;
+        continue;
+      }
+      if (source.startsWith(quote, i)) {
+        out += quote;
+        i += quote.length - 1;
+        quote = null;
+        continue;
+      }
+      if (ch === "\n" && quote.length === 1) quote = null;
+      out += ch;
+    } else if (ch === "'" || ch === '"') {
+      quote = source.startsWith(ch.repeat(3), i) ? ch.repeat(3) : ch;
+      out += quote;
+      i += quote.length - 1;
+    } else if (ch === "#") {
+      while (i + 1 < source.length && source[i + 1] !== "\n") i++;
+    } else out += ch;
   }
-  return line;
+  return out;
 }
 
 /** Parse a single action. Throws {@link ActionParseError} on malformed input. */
@@ -279,6 +293,17 @@ export function tryParseAction(source: string | null | undefined): ParsedAction 
   if (!source) return null;
   try {
     return parseAction(source);
+  } catch {
+    return null;
+  }
+}
+
+/** Like {@link parseActions} but returns `null` instead of throwing (and for empty input). */
+export function tryParseActions(source: string | null | undefined): ParsedAction[] | null {
+  if (!source) return null;
+  try {
+    const all = parseActions(source);
+    return all.length ? all : null;
   } catch {
     return null;
   }

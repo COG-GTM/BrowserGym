@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { tryParseAction, type ParsedAction } from "../parsers/action";
+import { tryParseActions, type ParsedAction } from "../parsers/action";
 import { cx } from "../utils";
 
 export interface ActionBadgeProps {
@@ -22,7 +22,7 @@ function truncate(s: string, n = MAX_TEXT): string {
 }
 
 export function ActionBadge({ action, error, compact, onBidClick, onBidHover, className }: ActionBadgeProps) {
-  const parsed: ParsedAction | null = useMemo(() => tryParseAction(action), [action]);
+  const parsed: ParsedAction[] | null = useMemo(() => tryParseActions(action), [action]);
 
   if (!action) {
     return (
@@ -39,6 +39,33 @@ export function ActionBadge({ action, error, compact, onBidClick, onBidHover, cl
       </span>
     );
   }
+  const badges = parsed.map((p, i) => (
+    <SingleBadge
+      key={i}
+      parsed={p}
+      error={error}
+      compact={compact}
+      onBidClick={onBidClick}
+      onBidHover={onBidHover}
+      className={parsed.length === 1 ? className : undefined}
+    />
+  ));
+  if (badges.length === 1) return badges[0]!;
+  return (
+    <span className={cx("stv-actions", className)} title={action}>
+      {badges}
+    </span>
+  );
+}
+
+function SingleBadge({
+  parsed,
+  error,
+  compact,
+  onBidClick,
+  onBidHover,
+  className,
+}: Omit<ActionBadgeProps, "action"> & { parsed: ParsedAction }) {
   return (
     <span
       className={cx("stv-action", error && "stv-action--error", className)}

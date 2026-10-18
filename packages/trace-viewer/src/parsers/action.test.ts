@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ActionParseError, parseAction, parseActions, tryParseAction } from "./action";
+import { ActionParseError, parseAction, parseActions, tryParseAction, tryParseActions } from "./action";
 
 describe("parseAction", () => {
   it("parses click with a bid", () => {
@@ -75,5 +75,18 @@ describe("parseActions", () => {
     expect(all.map((a) => a.name)).toEqual(["fill", "click"]);
     expect(all[0]!.text).toBe("a # not a comment");
     expect(parseActions("click('1'); click('2')")).toHaveLength(2);
+  });
+});
+
+describe("comments and multi-line strings", () => {
+  it("keeps # inside triple-quoted strings across lines", () => {
+    const a = parseAction("fill('1', '''first\n#second\nthird''')  # trailing comment");
+    expect(a.text).toBe("first\n#second\nthird");
+  });
+
+  it("tryParseActions returns every call", () => {
+    expect(tryParseActions("fill('1','Paris'); click('2')")?.map((a) => a.bid)).toEqual(["1", "2"]);
+    expect(tryParseActions("")).toBeNull();
+    expect(tryParseActions("click(")).toBeNull();
   });
 });

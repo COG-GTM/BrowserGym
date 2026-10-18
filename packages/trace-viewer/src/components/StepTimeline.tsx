@@ -1,5 +1,5 @@
 import { useCallback, useRef, type KeyboardEvent, type PointerEvent } from "react";
-import { tryParseAction } from "../parsers/action";
+import { tryParseActions } from "../parsers/action";
 import type { Step } from "../types";
 import { clamp, cx } from "../utils";
 import { ActionBadge } from "./ActionBadge";
@@ -75,7 +75,7 @@ export function StepTimeline({ steps, currentIndex, onChange, pageSize = 5, hide
   };
 
   const pct = (i: number) => (last === 0 ? 0 : (i / last) * 100);
-  const parsed = tryParseAction(step?.action);
+  const parsed = tryParseActions(step?.action);
 
   return (
     <div className={cx("stv-timeline", className)}>
@@ -88,7 +88,7 @@ export function StepTimeline({ steps, currentIndex, onChange, pageSize = 5, hide
         aria-valuemin={0}
         aria-valuemax={last}
         aria-valuenow={current}
-        aria-valuetext={`Step ${current + 1} of ${steps.length}${parsed ? `: ${parsed.name}` : ""}`}
+        aria-valuetext={`Step ${current + 1} of ${steps.length}${parsed ? `: ${parsed.map((a) => a.name).join(", ")}` : ""}`}
         aria-disabled={steps.length === 0 || undefined}
         onKeyDown={onKeyDown}
         onPointerDown={onPointerDown}
@@ -99,7 +99,7 @@ export function StepTimeline({ steps, currentIndex, onChange, pageSize = 5, hide
         <div className="stv-timeline__rail" />
         <div className="stv-timeline__fill" style={{ width: `${pct(current)}%` }} />
         {steps.map((s, i) => {
-          const cat = tryParseAction(s.action)?.category ?? (s.action ? "invalid" : "none");
+          const cat = tryParseActions(s.action)?.[0]?.category ?? (s.action ? "invalid" : "none");
           return (
             <span
               key={s.index}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useStepDetail, type StepDetailLoader } from "../hooks/useStepDetail";
-import { tryParseAction } from "../parsers/action";
+import { tryParseActions } from "../parsers/action";
 import type { ChatMessage, ElementBox, Run, Step, StepDetail } from "../types";
 import { clamp, cx, formatDuration } from "../utils";
 import { ActionBadge } from "./ActionBadge";
@@ -111,8 +111,8 @@ export function RunReplayPlayer({
   }, [playing, index, last, speed, stepIntervalMs, setIndex]);
 
   const step = steps[index];
-  const { detail, loading } = useStepDetail(step, getStepDetail);
-  const parsed = tryParseAction(step?.action);
+  const { detail, loading } = useStepDetail(step, getStepDetail, run?.id);
+  const parsed = tryParseActions(step?.action) ?? [];
   const actionError =
     errorAttribution === "next" ? steps[index + 1]?.last_action_error : step?.last_action_error;
   const timelineSteps = useMemo(
@@ -124,9 +124,9 @@ export function RunReplayPlayer({
   );
   const resolve = resolveScreenshotUrl ?? defaultResolver(apiBaseUrl);
   const boxes = getBoxes?.(index);
-  const targetBids = parsed?.bids ?? [];
+  const targetBids = [...new Set(parsed.flatMap((a) => a.bids))];
   const highlightBids = selectedBid ? [...new Set([...targetBids, selectedBid])] : targetBids;
-  const axHighlight = selectedBid ?? parsed?.bid ?? null;
+  const axHighlight = selectedBid ?? targetBids[0] ?? null;
 
   const togglePlay = () => {
     if (!playing && index >= last) setIndex(0);

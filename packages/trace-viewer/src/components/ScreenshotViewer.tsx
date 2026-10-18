@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ElementBox } from "../types";
 import { clamp, cx } from "../utils";
 
@@ -65,11 +65,20 @@ export function ScreenshotViewer({
   const scale = zoom === "fit" ? fitScale : zoom;
   const setScale = (s: number) => setZoom(clamp(Math.round(s * 100) / 100, minZoom, maxZoom));
 
-  const onWheel = (e: WheelEvent<HTMLDivElement>) => {
+  const wheelZoom = useRef<(e: WheelEvent) => void>(() => {});
+  wheelZoom.current = (e: WheelEvent) => {
     if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
     setScale(scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
   };
+  // React's onWheel is passive, so preventDefault() would not stop the browser's page zoom.
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => wheelZoom.current(e);
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []);
 
   const visibleBoxes = useMemo(() => {
     if (!boxes || mode === "none") return [];
@@ -122,7 +131,7 @@ export function ScreenshotViewer({
           </div>
         )}
       </div>
-      <div className="stv-shot__viewport" ref={viewportRef} onWheel={onWheel}>
+      <div className="stv-shot__viewport" ref={viewportRef}>
         {src ? (
           <div
             className="stv-shot__canvas"

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import step0 from "../../fixtures/flight-search/steps/0.json";
 import step5 from "../../fixtures/flight-search/steps/5.json";
+import { flightRun } from "../../fixtures";
 import type { StepDetail } from "../types";
 import { ActionBadge } from "./ActionBadge";
 import { AXTreeViewer } from "./AXTreeViewer";
@@ -25,6 +26,15 @@ describe("ActionBadge", () => {
     expect(screen.getByText("no action")).toBeInTheDocument();
     rerender(<ActionBadge action="click('a42'" />);
     expect(container.firstChild).toHaveAttribute("data-category", "invalid");
+  });
+});
+
+describe("ActionBadge multi-action", () => {
+  it("renders one badge per call with every bid", () => {
+    render(<ActionBadge action={"fill('1', 'Paris')\nclick('2')"} />);
+    expect(screen.getByText("fill")).toBeInTheDocument();
+    expect(screen.getByText("click")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Element 2" })).toBeInTheDocument();
   });
 });
 
@@ -136,5 +146,20 @@ describe("RunReplayPlayer", () => {
     render(<RunReplayPlayer steps={[bare as StepDetail]} getStepDetail={load} />);
     expect(await screen.findByText("'Search flights'")).toBeInTheDocument();
     expect(load).toHaveBeenCalledWith(5);
+  });
+
+  it("resets cached details when the run changes and stops loading on empty detail", async () => {
+    const tree = (name: string) => ({ ...(step0 as StepDetail), axtree_txt: `RootWebArea '${name}'` });
+    const runA = { ...flightRun, id: "run_a" };
+    const runB = { ...flightRun, id: "run_b" };
+    const base = { ...(step0 as StepDetail), axtree_txt: null } as StepDetail;
+    const { rerender } = render(<RunReplayPlayer run={runA} steps={[base]} getStepDetail={() => tree("Run A")} />);
+    expect(await screen.findByText("'Run A'")).toBeInTheDocument();
+    rerender(<RunReplayPlayer run={runB} steps={[base]} getStepDetail={() => tree("Run B")} />);
+    expect(await screen.findByText("'Run B'")).toBeInTheDocument();
+    expect(screen.queryByText("'Run A'")).not.toBeInTheDocument();
+    rerender(<RunReplayPlayer run={{ ...flightRun, id: "run_c" }} steps={[base]} getStepDetail={() => undefined} />);
+    await act(async () => {});
+    expect(screen.queryByText(/Loading/)).not.toBeInTheDocument();
   });
 });

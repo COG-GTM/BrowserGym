@@ -16,6 +16,7 @@ export {
   parseAction,
   parseActions,
   tryParseAction,
+  tryParseActions,
   type ActionCategory,
   type ParsedAction,
   type PyValue,

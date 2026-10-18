@@ -54,6 +54,7 @@
 .stv-btn--primary { background: var(--stv-accent); border-color: var(--stv-accent); color: #fff; min-width: 40px; }
 
 /* ActionBadge */
+.stv-actions { display: inline-flex; flex-wrap: wrap; gap: 4px; max-width: 100%; }
 .stv-action {
   --stv-cat: var(--stv-cat-unknown);
   display: inline-flex; align-items: center; gap: 6px; max-width: 100%;

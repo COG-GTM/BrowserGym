@@ -48,10 +48,11 @@
   <div id="confirm" role="status"></div>
 </main>
 <script>
+  const esc = (v) => v.replace(/[&<>"']/g, (c) => '&#' + c.charCodeAt(0) + ';');
   function search() {
-    const from = document.getElementById('from').value || '?';
-    const to = document.getElementById('to').value || '?';
-    const cabin = document.getElementById('cabin').value;
+    const from = esc(document.getElementById('from').value || '?');
+    const to = esc(document.getElementById('to').value || '?');
+    const cabin = esc(document.getElementById('cabin').value);
     const flights = [
       ['SH 214', '07:10 → 09:05', 412], ['SH 218', '12:45 → 14:40', 389], ['SH 230', '19:20 → 21:15', 455]
     ];
