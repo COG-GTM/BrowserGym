@@ -121,6 +121,9 @@ def test_is_empty_answer(value, expected):
         ([3], 3.0, "number", (3.0, True)),
         (["3.5"], 3.5, "number", (3.5, True)),
         (["Paris"], "Paris", "string", (["Paris"], True)),
+        # numeric singleton unwrapping only applies to number golds; text keeps its units
+        (["3"], "Paris", "string", (["3"], True)),
+        (["300 sqft"], "area: 300 sqft", "string", (["300 sqft"], True)),
         ("$12", 12.0, "number", (12.0, True)),
         ('{"a": 1}\n{"b": 2}', [{"a": 1}], "json", ([{"a": 1}, {"b": 2}], True)),
         ("not json", [{"a": 1}], "json", (["not json"], True)),
@@ -164,6 +167,9 @@ def test_fix_prediction(prediction, gold, evaluator, expected):
         ('{"a": 1}', "{'a': 1}", (1.0, 1.0)),
         # only gold answers get fix_ans quote repair, single-quoted predictions do not parse
         ("{'a': 1}", "{'a': 1}", (0.0, 1.0)),
+        # numeric-looking singleton vs text gold is scored as text, units included
+        ('["300 sqft"]', "area: 300 sqft", (0.8, 1.0)),
+        ('["3"]', "Paris", (0.0, 1.0)),
         # string list gold
         ("London, Paris", "Paris\nLondon", (1 / 3, 1.0)),
         ('["Paris", "London"]', "Paris\nLondon", (1.0, 1.0)),

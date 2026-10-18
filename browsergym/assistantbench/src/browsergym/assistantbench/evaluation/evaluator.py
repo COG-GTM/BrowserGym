@@ -94,7 +94,8 @@ def fix_prediction(prediction, gold_answer, evaluator):
         return prediction, False
 
     if (
-        type(prediction) == list
+        evaluator == "number"
+        and type(prediction) == list
         and len(prediction) == 1
         and (
             type(prediction[0]) in {int, float}
