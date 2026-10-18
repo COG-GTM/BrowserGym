@@ -8,7 +8,7 @@ from unittest import mock
 
 import pytest
 
-import browsergym.core  # noqa: F401  (registers browsergym/openended)
+import browsergym.core
 import browsergym.core.action.functions as fn_context
 from browsergym.core.env import BrowserEnv
 
@@ -18,6 +18,16 @@ with mock.patch.object(sys, "argv", ["mcp_server", "--headless"]):
 __DATA_DIR = pathlib.Path(__file__).resolve().parent / "data"
 EXAMPLE_URL = f"file://{__DATA_DIR}/example.html"
 LONG_PAGE_URL = f"file://{__DATA_DIR}/long_page.html"
+
+
+@pytest.fixture
+def fresh_global_playwright(monkeypatch):
+    """Let the MCP server's Playwright thread start its own global Playwright instance."""
+    monkeypatch.setattr(browsergym.core, "_PLAYWRIGHT", None)
+    yield
+    pw = browsergym.core._PLAYWRIGHT
+    if pw is not None:
+        mcp_server.PLAYWRIGHT_EXECUTOR.submit(pw.stop).result()
 
 
 def _patch_mcp_context(monkeypatch, app_ctx):
@@ -82,29 +92,31 @@ def test_env_and_actions_pinned_to_one_thread_and_serialized(monkeypatch):
     monkeypatch.setattr(fn_context, "failing", failing, raising=False)
 
     async def scenario():
-        async with mcp_server.app_lifespan(mcp_server.mcp) as app_ctx:
-            _patch_mcp_context(monkeypatch, app_ctx)
-            tool = mcp_server.fn_wrapper(noop, validate=False)
-            failing_tool = mcp_server.fn_wrapper(failing, validate=False)
-            results = await asyncio.gather(*[tool() for _ in range(8)], failing_tool())
-            executor = app_ctx.executor
-        return results, executor
+        results = []
+        for _ in range(2):
+            async with mcp_server.app_lifespan(mcp_server.mcp) as app_ctx:
+                _patch_mcp_context(monkeypatch, app_ctx)
+                tool = mcp_server.fn_wrapper(noop, validate=False)
+                failing_tool = mcp_server.fn_wrapper(failing, validate=False)
+                results += await asyncio.gather(*[tool() for _ in range(8)], failing_tool())
+        return results
 
-    results, executor = asyncio.run(scenario())
+    results = asyncio.run(scenario())
 
-    assert [obs["last_action_error"] for obs, *_ in results] == [""] * 8 + ["ValueError: boom"]
+    expected_errors = ([""] * 8 + ["ValueError: boom"]) * 2
+    assert [obs["last_action_error"] for obs, *_ in results] == expected_errors
     names = [name for name, _ in env.calls]
-    assert names[:2] == ["make", "reset"] and names[-1] == "close"
-    assert names.count("action") == 9
+    lifespan = ["make", "reset"] + ["pre_step", "action", "post_step"] * 9 + ["close"]
+    assert names == lifespan * 2
 
+    # Same thread across both lifespans, since the global Playwright instance outlives them.
     thread_ids = {ident for _, ident in env.calls}
     assert len(thread_ids) == 1
     assert threading.main_thread().ident not in thread_ids
     assert env.max_active_steps == 1
-    assert executor._shutdown
 
 
-def test_concurrent_tool_calls_on_real_browser(monkeypatch):
+def test_concurrent_tool_calls_on_real_browser(monkeypatch, fresh_global_playwright):
     async def scenario():
         async with mcp_server.app_lifespan(mcp_server.mcp) as app_ctx:
             _patch_mcp_context(monkeypatch, app_ctx)
@@ -125,6 +137,10 @@ def test_concurrent_tool_calls_on_real_browser(monkeypatch):
             scroll_y = await app_ctx.run(page.evaluate, "window.scrollY")
             assert scroll_y > 0
 
+        # A restarted server reuses the same Playwright thread and global instance.
+        async with mcp_server.app_lifespan(mcp_server.mcp) as app_ctx:
+            _patch_mcp_context(monkeypatch, app_ctx)
+            goto = mcp_server.fn_wrapper(fn_context.goto, validate=False)
             obs, *_ = await goto(EXAMPLE_URL)
             assert obs["last_action_error"] == ""
             assert obs["url"] == EXAMPLE_URL

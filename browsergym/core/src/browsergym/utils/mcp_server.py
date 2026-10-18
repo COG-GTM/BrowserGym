@@ -31,13 +31,17 @@ class AppContext:
     config: BgymConfig
     task_id: str
     actions: HighLevelActionSet
-    # Playwright's sync API is bound to the thread that started it, so every env call
-    # runs on this single worker thread, one tool call at a time.
-    executor: ThreadPoolExecutor
     lock: asyncio.Lock
+    executor: ThreadPoolExecutor = field(default_factory=lambda: PLAYWRIGHT_EXECUTOR)
 
     async def run(self, func: Callable, *args, **kwargs) -> Any:
         return await run_in_executor(self.executor, func, *args, **kwargs)
+
+
+# Playwright's sync API is bound to the thread that started it, and browsergym keeps one
+# global Playwright instance per process. Every env call therefore runs on this single,
+# process-wide worker thread, which outlives individual server lifespans.
+PLAYWRIGHT_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="browsergym-playwright")
 
 
 async def run_in_executor(executor: ThreadPoolExecutor, func: Callable, *args, **kwargs) -> Any:
@@ -119,33 +123,30 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     """Manage application lifecycle with type-safe context"""
     # Initialize on startup
     actions = HighLevelActionSet(demo_mode=config.demo_mode, subsets=args.subset)
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="browsergym-playwright")
+    executor = PLAYWRIGHT_EXECUTOR
+    _gym: BrowserEnv = await run_in_executor(
+        executor,
+        gym.make,
+        task_id,
+        headless=config.headless,
+        record_video_dir=config.record_video_dir,
+        action_mapping=actions.to_python_code,
+        timeout=config.timeout_ms,
+        task_kwargs={"start_url": "about:blank"},
+    )  # type: ignore
     try:
-        _gym: BrowserEnv = await run_in_executor(
-            executor,
-            gym.make,
-            task_id,
-            headless=config.headless,
-            record_video_dir=config.record_video_dir,
-            action_mapping=actions.to_python_code,
-            timeout=config.timeout_ms,
-            task_kwargs={"start_url": "about:blank"},
-        )  # type: ignore
-        try:
-            await run_in_executor(executor, _gym.reset)
-            yield AppContext(
-                gym=_gym,
-                config=config,
-                task_id=task_id,
-                actions=actions,
-                executor=executor,
-                lock=asyncio.Lock(),
-            )
-        finally:
-            # Cleanup on shutdown
-            await run_in_executor(executor, _gym.close)
+        await run_in_executor(executor, _gym.reset)
+        yield AppContext(
+            gym=_gym,
+            config=config,
+            task_id=task_id,
+            actions=actions,
+            lock=asyncio.Lock(),
+            executor=executor,
+        )
     finally:
-        executor.shutdown(wait=True)
+        # Cleanup on shutdown
+        await run_in_executor(executor, _gym.close)
 
 
 mcp = FastMCP("BrowserGym", lifespan=app_lifespan)
