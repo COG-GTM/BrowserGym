@@ -183,7 +183,8 @@ class RunManager:
                     self._sync_from_run_json(run_id, keep_status=True)
                     return
                 if not new_lines:
-                    self._check_liveness(run_id)
+                    # May block (sleep / terminate grace period), keep it off the event loop.
+                    await asyncio.to_thread(self._check_liveness, run_id)
                 await asyncio.sleep(self.settings.poll_interval)
         except asyncio.CancelledError:
             raise
@@ -267,7 +268,12 @@ class RunManager:
                 tail = _tail(self.paths(run_id).runner_log)
                 msg = f"runner exited with code {code} before reporting a final status"
                 self.finalize(run_id, "failed", error=f"{msg}\n{tail}".strip())
-        elif not pid_alive(rec.pid):
+        elif pid_alive(rec.pid):
+            if requested and time.monotonic() - requested > CANCEL_GRACE_SECONDS:
+                assert rec.pid is not None
+                terminate_pid(rec.pid, run_id)
+                self.finalize(run_id, "cancelled")
+        else:
             if _has_unread_terminal(self.paths(run_id).events):
                 return
             if requested:

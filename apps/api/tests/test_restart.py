@@ -65,3 +65,35 @@ def test_resume_does_not_renotify_old_statuses(make_api, settings):
     while not received and time.monotonic() < deadline:
         time.sleep(0.05)
     assert [e["status"] for e in received] == ["cancelled"]
+
+
+def test_recovered_runner_ignoring_cancel_is_killed_after_grace(make_api, settings, monkeypatch):
+    import side_api.monitor as monitor
+
+    monkeypatch.setattr(monitor, "CANCEL_GRACE_SECONDS", 0.3)
+    run, pid = _restart_with_live_runner(make_api, settings)
+    api2 = make_api(settings)
+    # Mark the run as running so cancel goes through the cooperative CANCEL path.
+    from side_api.db import RunRecord, session
+
+    engine = api2.client.app.state.manager.engine
+    with session(engine) as s:
+        rec = s.get(RunRecord, run["id"])
+        rec.status = "running"
+        s.add(rec)
+        s.commit()
+    assert api2.post(f"/runs/{run['id']}/cancel").json()["status"] == "running"
+    assert (settings.data_dir / "runs" / run["id"] / "CANCEL").exists()
+    assert api2.wait_for(run["id"])["status"] == "cancelled"
+    assert _wait_dead(pid)
+
+
+def test_sse_resume_tolerates_malformed_status(api, settings):
+    run = api.create_run()
+    api.wait_for(run["id"])
+    events = settings.data_dir / "runs" / run["id"] / "events.jsonl"
+    lines = events.read_text().splitlines()
+    lines.insert(1, json.dumps({"type": "status", "run_id": run["id"], "status": ["x"]}))
+    events.write_text("\n".join(lines) + "\n")
+    resp = api.get(f"/runs/{run['id']}/events", headers={"Last-Event-ID": "3"})
+    assert resp.status_code == 200 and "succeeded" in resp.text

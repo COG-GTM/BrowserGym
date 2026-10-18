@@ -40,6 +40,7 @@ def _is_terminal(raw: object) -> bool:
     return (
         isinstance(raw, dict)
         and raw.get("type") == "status"
+        and isinstance(raw.get("status"), str)
         and raw.get("status") in TERMINAL_STATUSES
     )
 
