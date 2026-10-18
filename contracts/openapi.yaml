@@ -1,0 +1,259 @@
+openapi: 3.1.0
+info:
+  title: Side API
+  version: 0.1.0
+  description: |
+    Shared contract for the Side app (web + mobile + backend) built on BrowserGym.
+    Base path: /api/v1. All timestamps are ISO-8601 UTC strings. IDs are opaque strings.
+servers:
+  - url: http://localhost:8000/api/v1
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, enum: [ok] }, version: { type: string } }, required: [status] }
+  /tasks:
+    get:
+      operationId: listTasks
+      parameters:
+        - { name: benchmark, in: query, schema: { type: string } }
+        - { name: q, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Registered BrowserGym tasks (gym ids such as browsergym/openended, browsergym/miniwob.click-test)
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Task" } }
+  /agents:
+    get:
+      operationId: listAgents
+      responses:
+        "200":
+          description: Available agent types
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AgentInfo" } }
+  /runs:
+    get:
+      operationId: listRuns
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/RunStatus" } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Runs, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Run" } }
+                  next_cursor: { type: [string, "null"] }
+                required: [items, next_cursor]
+    post:
+      operationId: createRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunCreate" }
+      responses:
+        "201":
+          description: Created (status=queued)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "422": { $ref: "#/components/responses/Error" }
+  /runs/{run_id}:
+    parameters: [ { $ref: "#/components/parameters/RunId" } ]
+    get:
+      operationId: getRun
+      responses:
+        "200": { description: Run, content: { application/json: { schema: { $ref: "#/components/schemas/Run" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteRun
+      responses:
+        "204": { description: Deleted }
+  /runs/{run_id}/cancel:
+    parameters: [ { $ref: "#/components/parameters/RunId" } ]
+    post:
+      operationId: cancelRun
+      responses:
+        "200": { description: Run, content: { application/json: { schema: { $ref: "#/components/schemas/Run" } } } }
+  /runs/{run_id}/steps:
+    parameters: [ { $ref: "#/components/parameters/RunId" } ]
+    get:
+      operationId: listSteps
+      responses:
+        "200":
+          description: Steps in order
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Step" } }
+  /runs/{run_id}/steps/{index}:
+    parameters:
+      - { $ref: "#/components/parameters/RunId" }
+      - { name: index, in: path, required: true, schema: { type: integer, minimum: 0 } }
+    get:
+      operationId: getStep
+      responses:
+        "200": { description: Step, content: { application/json: { schema: { $ref: "#/components/schemas/StepDetail" } } } }
+  /runs/{run_id}/steps/{index}/screenshot:
+    parameters:
+      - { $ref: "#/components/parameters/RunId" }
+      - { name: index, in: path, required: true, schema: { type: integer, minimum: 0 } }
+    get:
+      operationId: getStepScreenshot
+      responses:
+        "200": { description: PNG, content: { image/png: { schema: { type: string, format: binary } } } }
+  /runs/{run_id}/chat:
+    parameters: [ { $ref: "#/components/parameters/RunId" } ]
+    get:
+      operationId: listChat
+      responses:
+        "200": { description: Chat messages, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ChatMessage" } } } } }
+    post:
+      operationId: sendChat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { message: { type: string, minLength: 1 } }, required: [message] }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/ChatMessage" } } } }
+  /runs/{run_id}/events:
+    parameters: [ { $ref: "#/components/parameters/RunId" } ]
+    get:
+      operationId: streamRunEvents
+      description: |
+        Server-Sent Events stream. Each event has `event:` = RunEvent.type and `data:` = JSON RunEvent.
+        Stream closes after a terminal `status` event.
+      responses:
+        "200": { description: SSE stream, content: { text/event-stream: { schema: { $ref: "#/components/schemas/RunEvent" } } } }
+  /devices:
+    post:
+      operationId: registerDevice
+      description: Register a mobile device for push notifications (served by services/notifications, proxied or called directly).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeviceRegistration" }
+      responses:
+        "201": { description: Registered }
+components:
+  parameters:
+    RunId: { name: run_id, in: path, required: true, schema: { type: string } }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { type: object, properties: { detail: { type: string } }, required: [detail] }
+  schemas:
+    RunStatus: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+    Task:
+      type: object
+      required: [id, benchmark, title, requires_setup]
+      properties:
+        id: { type: string, example: browsergym/miniwob.click-test }
+        benchmark: { type: string, example: miniwob }
+        title: { type: string }
+        description: { type: [string, "null"] }
+        requires_setup: { type: boolean, description: true if the benchmark needs external servers/env vars (webarena, workarena) }
+    AgentInfo:
+      type: object
+      required: [type, title]
+      properties:
+        type: { type: string, enum: [mock, scripted, openai, anthropic] }
+        title: { type: string }
+        models: { type: array, items: { type: string } }
+    AgentConfig:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [mock, scripted, openai, anthropic] }
+        model: { type: [string, "null"] }
+        use_screenshot: { type: boolean, default: false }
+        use_axtree: { type: boolean, default: true }
+    RunCreate:
+      type: object
+      required: [task_id, agent]
+      properties:
+        task_id: { type: string }
+        agent: { $ref: "#/components/schemas/AgentConfig" }
+        goal: { type: [string, "null"], description: "Goal text, required for browsergym/openended" }
+        start_url: { type: [string, "null"], description: "Start URL for browsergym/openended" }
+        max_steps: { type: integer, default: 15, minimum: 1, maximum: 100 }
+        headless: { type: boolean, default: true }
+    Run:
+      type: object
+      required: [id, task_id, agent, status, n_steps, created_at]
+      properties:
+        id: { type: string }
+        task_id: { type: string }
+        goal: { type: [string, "null"] }
+        agent: { $ref: "#/components/schemas/AgentConfig" }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        reward: { type: [number, "null"] }
+        n_steps: { type: integer }
+        max_steps: { type: integer }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        error: { type: [string, "null"] }
+    Step:
+      type: object
+      required: [index, action, reward, terminated, truncated, timestamp]
+      properties:
+        index: { type: integer }
+        action: { type: [string, "null"], description: "BrowserGym action string, e.g. click('a42')" }
+        thought: { type: [string, "null"] }
+        url: { type: [string, "null"] }
+        reward: { type: number }
+        terminated: { type: boolean }
+        truncated: { type: boolean }
+        last_action_error: { type: [string, "null"] }
+        screenshot_url: { type: [string, "null"], description: "Relative URL to /runs/{id}/steps/{index}/screenshot" }
+        elapsed_ms: { type: [number, "null"] }
+        timestamp: { type: string, format: date-time }
+    StepDetail:
+      allOf:
+        - $ref: "#/components/schemas/Step"
+        - type: object
+          properties:
+            axtree_txt: { type: [string, "null"] }
+            pruned_html: { type: [string, "null"] }
+            focused_element_bid: { type: [string, "null"] }
+    ChatMessage:
+      type: object
+      required: [role, message, timestamp]
+      properties:
+        role: { type: string, enum: [user, assistant, info, infeasible] }
+        message: { type: string }
+        timestamp: { type: string, format: date-time }
+    RunEvent:
+      type: object
+      required: [type, run_id, timestamp]
+      properties:
+        type: { type: string, enum: [status, step, chat, log] }
+        run_id: { type: string }
+        timestamp: { type: string, format: date-time }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        step: { $ref: "#/components/schemas/Step" }
+        chat: { $ref: "#/components/schemas/ChatMessage" }
+        log: { type: string }
+    DeviceRegistration:
+      type: object
+      required: [expo_push_token, platform]
+      properties:
+        expo_push_token: { type: string }
+        platform: { type: string, enum: [ios, android] }
+        run_ids: { type: array, items: { type: string }, description: "Subscribe to specific runs; empty = all runs" }
