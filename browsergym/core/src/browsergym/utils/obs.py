@@ -16,7 +16,7 @@ from browsergym.core.constants import BROWSERGYM_VISIBILITY_ATTRIBUTE as VIS_ATT
 
 logger = logging.getLogger(__name__)
 
-IGNORED_AXTREE_ROLES = ["LineBreak"]
+IGNORED_AXTREE_ROLES = ["LineBreak", "InlineTextBox"]
 
 IGNORED_AXTREE_PROPERTIES = (
     "editable",
