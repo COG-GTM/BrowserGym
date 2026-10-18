@@ -17,6 +17,9 @@ from .utils import image_url_to_pil_image, pil_image_to_data_uri
 
 logger = logging.getLogger(__name__)
 
+# (connect, read) timeout in seconds for the classifieds reset request
+CLASSIFIEDS_RESET_TIMEOUT = (10, 120)
+
 
 def _build_goal(config, with_na_hint: bool):
     """
@@ -202,10 +205,16 @@ class GenericVisualWebArenaTask(AbstractBrowserTask):
         if self.config.get("require_reset", False):
             if "classifieds" in self.config["sites"]:
                 # Send POST request to __CLASSIFIEDS__/index.php?page=reset with token=CLASSIFIEDS_TOKEN
-                response = requests.post(
-                    f'{self.webarena_instance.urls["classifieds"]}/index.php?page=reset',
-                    data={"token": self.webarena_instance.classifieds_reset_token},
-                )
+                try:
+                    response = requests.post(
+                        f'{self.webarena_instance.urls["classifieds"]}/index.php?page=reset',
+                        data={"token": self.webarena_instance.classifieds_reset_token},
+                        timeout=CLASSIFIEDS_RESET_TIMEOUT,
+                    )
+                except requests.exceptions.Timeout as e:
+                    raise Exception(
+                        f"Failed to reset Classifieds site: request timed out ({e})"
+                    ) from e
 
                 # Check if the request was successful
                 if not response.status_code == 200:
