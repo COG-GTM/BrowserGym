@@ -45,8 +45,15 @@ def miniwob(step):
     d.text((166, 272), "Submit", fill="#ffffff", font=font(15))
     if step in (1, 3):
         target = [126, 142, 424, 182] if step == 1 else bx
-        d.rectangle([target[0] - 4, target[1] - 4, target[2] + 4, target[3] + 4], outline="#f59e0b", width=3)
-        d.text((target[2] + 10, target[1]), "bid=a12" if step == 1 else "bid=a31", fill="#b45309", font=font(13))
+        d.rectangle(
+            [target[0] - 4, target[1] - 4, target[2] + 4, target[3] + 4], outline="#f59e0b", width=3
+        )
+        d.text(
+            (target[2] + 10, target[1]),
+            "bid=a12" if step == 1 else "bid=a31",
+            fill="#b45309",
+            font=font(13),
+        )
     if pressed:
         d.rounded_rectangle([450, 262, W - 44, 302], radius=8, fill="#dcfce7")
         d.text((466, 272), "✓ Reward 1.0", fill="#166534", font=font(15))
@@ -55,8 +62,18 @@ def miniwob(step):
 
 def openended(step):
     img, d = frame("https://example.com/", "Example Domain")
-    d.text((24, 100), "This domain is for use in illustrative examples in documents.", fill="#374151", font=font(14))
-    d.text((24, 124), "You may use this domain in literature without prior coordination.", fill="#374151", font=font(14))
+    d.text(
+        (24, 100),
+        "This domain is for use in illustrative examples in documents.",
+        fill="#374151",
+        font=font(14),
+    )
+    d.text(
+        (24, 124),
+        "You may use this domain in literature without prior coordination.",
+        fill="#374151",
+        font=font(14),
+    )
     d.text((24, 160), "More information...", fill="#2563eb", font=font(14))
     if step >= 1:
         d.rectangle([20, 156, 166, 180], outline="#f59e0b", width=3)
