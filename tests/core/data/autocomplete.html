@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<body>
+
+<h2>Autocomplete</h2>
+
+<label for="city">City:</label>
+<input type="text" id="city" name="city" autocomplete="off">
+<div id="suggestions"></div>
+<p>Character keydown events: <span id="keydown-count">0</span></p>
+
+<script>
+  const cities = ["Lisbon", "London", "Lyon", "Paris", "Parma", "Prague"];
+  const city = document.getElementById("city");
+  const suggestions = document.getElementById("suggestions");
+  const keydownCount = document.getElementById("keydown-count");
+  city.addEventListener("keydown", (event) => {
+    if (event.key.length !== 1) {
+      return;
+    }
+    keydownCount.textContent = String(Number(keydownCount.textContent) + 1);
+  });
+  city.addEventListener("input", () => {
+    suggestions.replaceChildren();
+    if (!city.value) {
+      return;
+    }
+    cities
+      .filter((name) => name.toLowerCase().startsWith(city.value.toLowerCase()))
+      .forEach((name) => {
+        const option = document.createElement("div");
+        option.className = "suggestion";
+        option.textContent = name;
+        suggestions.appendChild(option);
+      });
+  });
+</script>
+
+</body>
+</html>
