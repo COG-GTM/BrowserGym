@@ -71,20 +71,52 @@ def main() -> None:
     page = env.unwrapped.page
 
     plan = [
-        ("thought", "The form is empty. I'll start with the origin field.", lambda: f"fill('{bid_of(page, '#from')}', 'Paris')"),
+        (
+            "thought",
+            "The form is empty. I'll start with the origin field.",
+            lambda: f"fill('{bid_of(page, '#from')}', 'Paris')",
+        ),
         ("thought", "Now the destination.", lambda: f"fill('{bid_of(page, '#to')}', 'Lisbon')"),
-        ("thought", "Cabin must be Business.", lambda: f"select_option('{bid_of(page, '#cabin')}', 'Business')"),
-        ("thought", "Only direct flights are wanted; I'll tick the checkbox.", lambda: "click('zz99')"),
-        ("thought", "That bid does not exist. Retrying with the checkbox's real bid.", lambda: f"click('{bid_of(page, '#direct')}')"),
-        ("thought", "All filters set. Submitting the search.", lambda: f"click('{bid_of(page, '#go')}')"),
-        ("thought", "SH 218 at €389 is the cheapest direct option. Selecting it.", lambda: f"click('{bid_of(page, '#results .flight:nth-of-type(2) button')}')"),
-        ("thought", "The flight is held. Reporting back to the user.", lambda: "send_msg_to_user('Held SH 218 (12:45 → 14:40, Business, direct) for €389. The hold expires in 15 minutes.')"),
+        (
+            "thought",
+            "Cabin must be Business.",
+            lambda: f"select_option('{bid_of(page, '#cabin')}', 'Business')",
+        ),
+        (
+            "thought",
+            "Only direct flights are wanted; I'll tick the checkbox.",
+            lambda: "click('zz99')",
+        ),
+        (
+            "thought",
+            "That bid does not exist. Retrying with the checkbox's real bid.",
+            lambda: f"click('{bid_of(page, '#direct')}')",
+        ),
+        (
+            "thought",
+            "All filters set. Submitting the search.",
+            lambda: f"click('{bid_of(page, '#go')}')",
+        ),
+        (
+            "thought",
+            "SH 218 at €389 is the cheapest direct option. Selecting it.",
+            lambda: f"click('{bid_of(page, '#results .flight:nth-of-type(2) button')}')",
+        ),
+        (
+            "thought",
+            "The flight is held. Reporting back to the user.",
+            lambda: "send_msg_to_user('Held SH 218 (12:45 → 14:40, Business, direct) for €389. The hold expires in 15 minutes.')",
+        ),
         ("thought", None, lambda: None),
     ]
 
     chat = [
         {"role": "user", "message": GOAL, "timestamp": iso(BASE_TIME)},
-        {"role": "assistant", "message": "Hi! I am your assistant, how can I help?", "timestamp": iso(BASE_TIME)},
+        {
+            "role": "assistant",
+            "message": "Hi! I am your assistant, how can I help?",
+            "timestamp": iso(BASE_TIME),
+        },
     ]
     clock = BASE_TIME + timedelta(seconds=1)
     cumulative_reward = 0.0
@@ -92,7 +124,9 @@ def main() -> None:
     for index, (_, thought, make_action) in enumerate(plan):
         action = make_action()
         (OUT / "steps" / f"{index}.png").write_bytes(png_bytes(obs["screenshot"]))
-        axtree_txt = flatten_axtree_to_str(obs["axtree_object"], extra_properties=obs["extra_element_properties"])
+        axtree_txt = flatten_axtree_to_str(
+            obs["axtree_object"], extra_properties=obs["extra_element_properties"]
+        )
         step = {
             "index": index,
             "action": action,
@@ -109,11 +143,15 @@ def main() -> None:
             "pruned_html": None,
             "focused_element_bid": obs["focused_element_bid"] or None,
         }
-        (OUT / "steps" / f"{index}.boxes.json").write_text(json.dumps(boxes(obs["extra_element_properties"])))
+        (OUT / "steps" / f"{index}.boxes.json").write_text(
+            json.dumps(boxes(obs["extra_element_properties"]))
+        )
         n_steps = index + 1
         if action is None:
             step["reward"] = 1.0
-            (OUT / "steps" / f"{index}.json").write_text(json.dumps(step, indent=2, ensure_ascii=False))
+            (OUT / "steps" / f"{index}.json").write_text(
+                json.dumps(step, indent=2, ensure_ascii=False)
+            )
             break
         t0 = time.time()
         obs, reward, terminated, truncated, _ = env.step(action)
@@ -122,10 +160,23 @@ def main() -> None:
         (OUT / "steps" / f"{index}.json").write_text(json.dumps(step, indent=2, ensure_ascii=False))
         clock += timedelta(milliseconds=elapsed + 2300)
         if action.startswith("send_msg_to_user"):
-            chat.append({"role": "assistant", "message": action[len("send_msg_to_user('"):-2], "timestamp": iso(clock)})
+            chat.append(
+                {
+                    "role": "assistant",
+                    "message": action[len("send_msg_to_user('") : -2],
+                    "timestamp": iso(clock),
+                }
+            )
         cumulative_reward += reward
 
-    chat.insert(2, {"role": "info", "message": "Run started: browsergym/openended · scripted agent", "timestamp": iso(BASE_TIME)})
+    chat.insert(
+        2,
+        {
+            "role": "info",
+            "message": "Run started: browsergym/openended · scripted agent",
+            "timestamp": iso(BASE_TIME),
+        },
+    )
     run = {
         "id": "run_flight_search",
         "task_id": "browsergym/openended",

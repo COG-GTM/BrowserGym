@@ -30,13 +30,17 @@ def main() -> None:
         for sid in stories:
             mobile = sid in MOBILE
             page = browser.new_page(
-                viewport={"width": 414, "height": 896} if mobile else {"width": 1280, "height": 800},
+                viewport=(
+                    {"width": 414, "height": 896} if mobile else {"width": 1280, "height": 800}
+                ),
                 device_scale_factor=2 if mobile else 1,
             )
             page.goto(f"{base}/iframe.html?id={sid}&viewMode=story")
             page.wait_for_selector("#storybook-root > *")
             page.wait_for_load_state("networkidle")
-            page.evaluate("() => Promise.all([...document.images].map(i => i.complete ? 0 : new Promise(r => i.onload = i.onerror = r)))")
+            page.evaluate(
+                "() => Promise.all([...document.images].map(i => i.complete ? 0 : new Promise(r => i.onload = i.onerror = r)))"
+            )
             page.wait_for_timeout(300)
             page.screenshot(path=str(OUT / f"{sid}.png"), full_page=True)
             page.close()
