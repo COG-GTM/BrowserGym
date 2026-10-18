@@ -545,23 +545,23 @@
         }
 
         // Inline markdown on already-escaped text: [text](https://url), **bold**, *italic*.
-        // Links are split out first so the destination is taken verbatim from the escaped input.
+        // Links are swapped for placeholders before emphasis, so emphasis can span a link while
+        // the destination is taken verbatim from the escaped input and never formatted.
+        const LINK_SLOT = /\uE000(\d+)\uE001/g;
         function renderInline(escaped) {
-            return escaped
-                .split(LINK_TOKEN)
-                .map((part) => {
-                    const link = part.match(LINK_PARTS);
-                    if (!link) {
-                        return renderEmphasis(part);
-                    }
-                    const [, text, url] = link;
-                    // url is already HTML-escaped (no quotes or tags), so it cannot break out of the attribute
-                    if (!SAFE_LINK.test(url.replace(/&amp;/g, "&"))) {
-                        return renderEmphasis(part);
-                    }
-                    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${renderEmphasis(text)}</a>`;
-                })
-                .join("")
+            const links = [];
+            const withSlots = escaped.replace(/[\uE000\uE001]/g, "").replace(LINK_TOKEN, (token) => {
+                const [, text, url] = token.match(LINK_PARTS);
+                // url is already HTML-escaped (no quotes or tags), so it cannot break out of the attribute
+                links.push(
+                    SAFE_LINK.test(url.replace(/&amp;/g, "&"))
+                        ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${renderEmphasis(text)}</a>`
+                        : token
+                );
+                return `\uE000${links.length - 1}\uE001`;
+            });
+            return renderEmphasis(withSlots)
+                .replace(LINK_SLOT, (slot, i) => links[Number(i)])
                 .replace(/\n/g, "<br>");
         }
 

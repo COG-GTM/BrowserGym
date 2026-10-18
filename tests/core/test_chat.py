@@ -324,3 +324,21 @@ def test_markdown_only_produces_safe_markup(chat, msg):
     )
     assert report == []
     assert chat.page.evaluate("window.__xss") is None
+
+
+@pytest.mark.parametrize(
+    "msg, wrapper",
+    [
+        ("**[docs](https://example.com/*x*)**", "strong"),
+        ("*[docs](https://example.com/*x*)*", "em"),
+        ("**see [docs](https://example.com/*x*) now**", "strong"),
+        ("*see [docs](https://example.com/*x*) now*", "em"),
+    ],
+)
+def test_emphasis_spans_links(chat, msg, wrapper):
+    chat.add_message("assistant", msg)
+    bubble = bubbles(chat, "assistant").last
+    link = bubble.locator(f"{wrapper} > a")
+    assert link.get_attribute("href") == "https://example.com/*x*"
+    assert link.inner_text() == "docs"
+    assert "*" not in bubble.inner_text()
