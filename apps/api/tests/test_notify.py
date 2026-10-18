@@ -63,3 +63,13 @@ def test_devices_proxied_to_notifications_service(make_api, settings):
     assert api.post("/devices", json=body).status_code == 201
     assert str(seen[0].url) == "http://notify.test/api/v1/devices"
     assert json.loads(seen[0].content) == body
+
+
+def test_empty_notify_url_disables_forwarding(monkeypatch):
+    from side_api.config import Settings
+
+    for value in ("", "  ", "/"):
+        monkeypatch.setenv("SIDE_NOTIFY_URL", value)
+        assert Settings.from_env().notify_url is None
+    monkeypatch.setenv("SIDE_NOTIFY_URL", "http://notify:8001/")
+    assert Settings.from_env().notify_url == "http://notify:8001"

@@ -47,7 +47,7 @@ class Settings:
             runner_cmd=env.get("SIDE_RUNNER_CMD") or None,
             fake_runner=_truthy(env.get("SIDE_FAKE_RUNNER")),
             fake_step_delay=float(env.get("SIDE_FAKE_STEP_DELAY", "0.5")),
-            notify_url=(env.get("SIDE_NOTIFY_URL") or "").rstrip("/") or None,
+            notify_url=(env.get("SIDE_NOTIFY_URL") or "").strip().rstrip("/") or None,
             cors_origins=DEFAULT_CORS_ORIGINS + extra_origins,
             contract_path=Path(contract) if contract else None,
         )

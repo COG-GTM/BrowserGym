@@ -60,7 +60,7 @@ data: {"type":"status","run_id":"38af…","timestamp":"2026-10-18T02:42:26.553Z"
 | `SIDE_FAKE_RUNNER` | off | `1` = in-process FakeRunner (ignored if `SIDE_RUNNER_CMD` is set) |
 | `SIDE_FAKE_STEP_DELAY` | `0.5` | Seconds between FakeRunner steps |
 | `SIDE_RUNNER_CMD` | `python -m side_runner` | Runner command prefix; runner-contract args are appended |
-| `SIDE_NOTIFY_URL` | unset | If set, every `status` event is POSTed to `${SIDE_NOTIFY_URL}/internal/run-events`, and `POST /devices` is forwarded to `${SIDE_NOTIFY_URL}/api/v1/devices` |
+| `SIDE_NOTIFY_URL` | unset | Empty/unset disables forwarding. If set, every `status` event is POSTed to `${SIDE_NOTIFY_URL}/internal/run-events`, and `POST /devices` is forwarded to `${SIDE_NOTIFY_URL}/api/v1/devices` |
 | `SIDE_CORS_ORIGINS` | – | Extra comma-separated origins (localhost:3000 and Expo 8081/19000/19006 are always allowed) |
 | `SIDE_CONTRACT_PATH` | auto (`contracts/openapi.yaml` in an ancestor dir) | Contract served at `/api/v1/openapi.json` |
 
@@ -78,6 +78,11 @@ the runner contract, handy for exercising the `SIDE_RUNNER_CMD` path:
 ```bash
 SIDE_RUNNER_CMD="python -m side_api.fake_runner" uvicorn side_api.main:app --port 8000
 ```
+
+### Running behind a proxy / in containers
+
+- Uvicorn honours `X-Forwarded-*` headers from the IPs in `FORWARDED_ALLOW_IPS` (default `127.0.0.1`). The API itself never uses the client address, so this only affects request URLs and logs.
+- The API runs as any UID (e.g. 1001 in `deploy/`). It needs write access to `SIDE_DATA_DIR`, where it creates `runs/` and the SQLite index (`side.db`, WAL mode) at startup.
 
 ## Tests
 
