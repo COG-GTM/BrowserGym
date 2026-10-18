@@ -14,12 +14,20 @@ import os
 import sys
 from typing import Optional, Sequence
 
+from .artifacts import validate_run_id
 from .runner import RunConfig, run_episode
+
+
+def _run_id(value: str) -> str:
+    try:
+        return validate_run_id(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="side_runner", description=__doc__.split("::")[0])
-    p.add_argument("--run-id", required=True)
+    p.add_argument("--run-id", required=True, type=_run_id)
     p.add_argument("--task", required=True, help="gym id, e.g. browsergym/openended")
     p.add_argument("--agent-json", required=True, help="AgentConfig JSON object")
     p.add_argument("--max-steps", type=int, default=15)

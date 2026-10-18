@@ -202,19 +202,20 @@ class EpisodeRunner:
             t0 = time.perf_counter()
             out = self.agent.get_action(obs)
             raw_obs, reward, terminated, truncated, _ = self.env.step(out.action)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
             obs = preprocess_obs(raw_obs)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            done = self.agent.episode_done(out, obs)
 
             total_reward += float(reward)
             self.run["reward"] = total_reward
-            stop = terminated or truncated or out.done
+            stop = terminated or truncated or done
             if n == cfg.max_steps and not stop:
                 truncated = True
             self._record_step(
                 n, obs, out.action, out.thought, reward, terminated, truncated, elapsed_ms
             )
             self._sync_chat()
-            if terminated or truncated or out.done:
+            if terminated or truncated or done:
                 break
 
         if self._cancel_requested():
@@ -262,7 +263,10 @@ class EpisodeRunner:
             except Exception:  # noqa: BLE001
                 logger.warning("error while closing the environment", exc_info=True)
         if self.agent is not None:
-            self.agent.close()
+            try:
+                self.agent.close()
+            except Exception:  # noqa: BLE001
+                logger.warning("error while closing the agent", exc_info=True)
 
 
 def run_episode(config: RunConfig) -> str:

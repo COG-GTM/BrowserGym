@@ -104,6 +104,42 @@ def test_prompt_contents():
     assert not any(p["type"] == "image" for p in parts)
 
 
+def test_prompt_keeps_goal_images_independent_of_screenshot():
+    agent = create_agent({"type": "mock"})
+    goal = (
+        {"type": "text", "text": "find this product"},
+        {"type": "image_url", "image_url": "data:image/png;base64,AAAA"},
+    )
+    parts = build_user_content(
+        _obs(goal_object=goal), agent.action_set, [], use_axtree=True, use_screenshot=False
+    )
+    assert [p["url"] for p in parts if p["type"] == "image"] == ["data:image/png;base64,AAAA"]
+    content = AnthropicAgent.to_anthropic_content(
+        parts + [{"type": "image", "url": "https://example.com/a.png"}]
+    )
+    sources = [p["source"] for p in content if p["type"] == "image"]
+    assert sources == [
+        {"type": "base64", "media_type": "image/png", "data": "AAAA"},
+        {"type": "url", "url": "https://example.com/a.png"},
+    ]
+
+
+def test_mock_agent_ignores_image_goal_entries():
+    agent = create_agent({"type": "mock"})
+    goal = ({"type": "text", "text": "goal"}, {"type": "image_url", "image_url": "data:x"})
+    agent.get_action(_obs(goal_object=goal))
+    chat = _obs()["chat_messages"] + ({"role": "user", "message": "hello"},)
+    out = agent.get_action(_obs(goal_object=goal, chat_messages=chat))
+    assert out.action == "send_msg_to_user('Received: hello')"
+
+
+def test_llm_failed_terminal_action_is_not_done():
+    agent = OpenAIAgent({"type": "openai"}, client=object())
+    out = AgentOutput(action="send_msg_to_user()", done=True)
+    assert not agent.episode_done(out, {"last_action_error": "TypeError: missing text"})
+    assert agent.episode_done(out, {"last_action_error": ""})
+
+
 def test_llm_agents_require_keys(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)

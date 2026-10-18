@@ -46,5 +46,9 @@ class Agent:
     def get_action(self, obs: dict) -> AgentOutput:
         raise NotImplementedError
 
+    def episode_done(self, out: AgentOutput, obs: dict) -> bool:
+        """Whether to stop after ``out.action`` was executed and produced ``obs``."""
+        return out.done
+
     def close(self) -> None:
         pass

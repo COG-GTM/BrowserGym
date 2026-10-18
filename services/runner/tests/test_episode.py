@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from side_runner.agents import _REGISTRY
+from side_runner.agents.openai_agent import OpenAIAgent
 from side_runner.runner import RunConfig, run_episode
 
 from conftest import SITE_DIR, read_jsonl, validate_run_dir
@@ -241,3 +243,49 @@ def test_cli_rejects_bad_agent_json(tmp_path):
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     assert proc.returncode == 2 and "agent-json" in proc.stderr
+
+
+class _FlakyLLM(OpenAIAgent):
+    """First answers with a broken terminal action, then a valid one."""
+
+    answers = ["```send_msg_to_user()```", "```send_msg_to_user('ok')```"]
+
+    def complete(self, system, content):
+        return self.answers[len(self.history)]
+
+    def close(self):
+        raise RuntimeError("close failed")
+
+
+def test_failed_terminal_action_continues_and_close_errors_are_contained(
+    tmp_path, site_url, monkeypatch
+):
+    monkeypatch.setitem(_REGISTRY, "openai", lambda cfg: _FlakyLLM(cfg, client=object()))
+    agent = {"type": "openai"}
+    assert run_episode(_cfg(tmp_path, site_url, agent=agent)) == "succeeded"
+    art = validate_run_dir(tmp_path / "runs" / "r1")
+    assert art["run"]["n_steps"] == 2
+    assert art["steps"][1]["last_action_error"] and not art["steps"][2]["last_action_error"]
+    assert ("assistant", "ok") in [(m["role"], m["message"]) for m in art["chat"]]
+
+
+def test_cli_rejects_path_like_run_id(tmp_path):
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "side_runner",
+            "--run-id",
+            "../evil",
+            "--task",
+            OPENENDED,
+            "--agent-json",
+            '{"type":"mock"}',
+            "--data-dir",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2 and "invalid run id" in proc.stderr
+    assert not (tmp_path / "evil").exists() and not (tmp_path.parent / "evil").exists()

@@ -23,8 +23,8 @@ class OpenAIAgent(LLMAgent):
         out = []
         for part in content:
             if part["type"] == "image":
-                url = f"data:image/jpeg;base64,{part['data']}"
-                out.append({"type": "image_url", "image_url": {"url": url, "detail": "auto"}})
+                image_url = {"url": part["url"], "detail": "auto"}
+                out.append({"type": "image_url", "image_url": image_url})
             else:
                 out.append({"type": "text", "text": part["text"]})
         return out

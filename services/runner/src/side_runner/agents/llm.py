@@ -61,15 +61,23 @@ def parse_response(text: str) -> tuple[str, Optional[str]]:
 def build_user_content(
     obs: dict, action_set, history: list[str], use_axtree: bool, use_screenshot: bool
 ) -> list[dict[str, Any]]:
-    """Provider-neutral content parts: ``{"type": "text", "text"}`` / ``{"type": "image", "data"}``."""
+    """Provider-neutral content parts: ``{"type": "text", "text"}`` / ``{"type": "image", "url"}``.
+
+    Image URLs are data URIs (``data:image/...;base64,...``) or http(s) URLs.
+    """
     parts: list[dict[str, Any]] = []
 
     def text(t: str) -> None:
         parts.append({"type": "text", "text": t})
 
-    goal_texts = [g["text"] for g in obs.get("goal_object", ()) if g.get("type") == "text"]
+    goal = obs.get("goal_object", ())
+    goal_texts = [g["text"] for g in goal if g.get("type") == "text"]
     if goal_texts:
         text("# Goal\n" + "\n".join(goal_texts) + "\n")
+    for g in goal:  # e.g. VisualWebArena goal images, sent regardless of use_screenshot
+        if g.get("type") == "image_url":
+            url = g["image_url"]
+            parts.append({"type": "image", "url": url["url"] if isinstance(url, dict) else url})
 
     chat = [
         m for m in obs.get("chat_messages", ()) if m["role"] in ("user", "assistant", "infeasible")
@@ -92,7 +100,12 @@ def build_user_content(
 
     if use_screenshot and obs.get("screenshot") is not None:
         text("# Current page Screenshot\n")
-        parts.append({"type": "image", "data": image_to_jpeg_base64(obs["screenshot"])})
+        parts.append(
+            {
+                "type": "image",
+                "url": "data:image/jpeg;base64," + image_to_jpeg_base64(obs["screenshot"]),
+            }
+        )
 
     text(
         "# Action Space\n\n"
@@ -139,6 +152,10 @@ class LLMAgent(Agent):
 
     def complete(self, system: str, content: list[dict[str, Any]]) -> str:
         raise NotImplementedError
+
+    def episode_done(self, out: AgentOutput, obs: dict) -> bool:
+        # A terminal action that failed to execute (e.g. bad arguments) did not answer the user.
+        return out.done and not obs.get("last_action_error")
 
     def get_action(self, obs: dict) -> AgentOutput:
         content = build_user_content(

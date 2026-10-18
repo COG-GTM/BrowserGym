@@ -1,6 +1,9 @@
+import re
 from typing import Any
 
 from .llm import LLMAgent
+
+_DATA_URI = re.compile(r"data:(image/[\w.+-]+);base64,(.*)", re.S)
 
 
 class AnthropicAgent(LLMAgent):
@@ -26,16 +29,12 @@ class AnthropicAgent(LLMAgent):
         out = []
         for part in content:
             if part["type"] == "image":
-                out.append(
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": part["data"],
-                        },
-                    }
-                )
+                m = _DATA_URI.match(part["url"])
+                if m:
+                    source = {"type": "base64", "media_type": m[1], "data": m[2]}
+                else:
+                    source = {"type": "url", "url": part["url"]}
+                out.append({"type": "image", "source": source})
             else:
                 out.append({"type": "text", "text": part["text"]})
         return out

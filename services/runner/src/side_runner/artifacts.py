@@ -11,6 +11,7 @@ runs/<run_id>/CANCEL            cancel marker (written by the API)
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -44,9 +45,19 @@ def atomic_write_text(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
+def validate_run_id(run_id: str) -> str:
+    """Run ids become a directory name under ``runs/``; reject anything path-like."""
+    if not RUN_ID_RE.fullmatch(run_id) or ".." in run_id:
+        raise ValueError(f"invalid run id {run_id!r}: expected [A-Za-z0-9][A-Za-z0-9._-]*")
+    return run_id
+
+
 class RunStore:
     def __init__(self, data_dir: str | os.PathLike, run_id: str):
-        self.run_id = run_id
+        self.run_id = validate_run_id(run_id)
         self.run_dir = Path(data_dir) / "runs" / run_id
         self.steps_dir = self.run_dir / "steps"
         self.run_json = self.run_dir / "run.json"

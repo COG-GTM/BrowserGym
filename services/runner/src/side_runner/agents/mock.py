@@ -37,8 +37,8 @@ class MockAgent(Agent):
 
         user_msgs = [m for m in obs.get("chat_messages", ()) if m["role"] == "user"]
         if self.n_user_msgs_seen is None:
-            # the goal is echoed as user message(s) at reset; it is not something to acknowledge
-            self.n_user_msgs_seen = len(obs.get("goal_object", ()))
+            # text goals are echoed as user messages at reset (images use user_image); skip them
+            self.n_user_msgs_seen = sum(g.get("type") == "text" for g in obs.get("goal_object", ()))
         if len(user_msgs) > self.n_user_msgs_seen:
             msg = user_msgs[self.n_user_msgs_seen]["message"]
             self.n_user_msgs_seen += 1

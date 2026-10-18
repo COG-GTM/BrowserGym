@@ -1,5 +1,6 @@
 import json
 
+import pytest
 import numpy as np
 from PIL import Image
 
@@ -60,3 +61,9 @@ def test_build_step_maps_empty_strings_to_null():
     assert step["screenshot_url"] == "/runs/r1/steps/2/screenshot" and step["elapsed_ms"] == 12.3
     assert_valid("Step", step_summary(step))
     assert "axtree_txt" not in step_summary(step)
+
+
+@pytest.mark.parametrize("bad", ["../x", "a/b", "..", "", ".hidden", "a\\b", "x" * 200])
+def test_run_store_rejects_path_like_run_ids(tmp_path, bad):
+    with pytest.raises(ValueError):
+        RunStore(tmp_path, bad)
