@@ -285,7 +285,7 @@ def record_posts(monkeypatch, status_code):
 
     posts = []
 
-    def fake_post(url, data):
+    def fake_post(url, data, **kwargs):
         posts.append((url, data))
         return StubResponse(status_code)
 
