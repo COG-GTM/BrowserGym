@@ -46,8 +46,16 @@ test.describe("chat", () => {
     if (API_MODE === "live") {
       expect(msg.role).toBe("user");
       expect(msg.message).toBe(message);
-      const history = await expectOp<any[]>(request, "listChat", 200, { params: { run_id: runId } });
-      expect(history.map((m) => m.message)).toContain(message);
+      // The API queues chat in inbox.jsonl; it shows up in listChat once the runner drains it between steps.
+      await expect
+        .poll(
+          async () => {
+            const history = await expectOp<any[]>(request, "listChat", 200, { params: { run_id: runId } });
+            return history.map((m) => m.message);
+          },
+          { timeout: 30_000, message: "sent message appears in listChat" },
+        )
+        .toContain(message);
       await expectOp(request, "cancelRun", 200, { params: { run_id: runId } });
     }
   });
