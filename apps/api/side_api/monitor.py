@@ -6,7 +6,9 @@ import asyncio
 import contextlib
 import json
 import logging
+import threading
 import time
+from collections import defaultdict
 
 from sqlalchemy import Engine
 from sqlmodel import select
@@ -32,6 +34,8 @@ class RunManager:
         self.monitors: dict[str, asyncio.Task] = {}
         self.cancel_requested: dict[str, float] = {}
         self.loop: asyncio.AbstractEventLoop | None = None
+        # Serialises liveness checks (worker threads) against deletion of the same run.
+        self.run_locks: defaultdict[str, threading.Lock] = defaultdict(threading.Lock)
 
     def paths(self, run_id: str) -> RunPaths:
         return RunPaths(self.settings.data_dir, run_id)
@@ -114,12 +118,17 @@ class RunManager:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
         self.cancel_requested.pop(run_id, None)
-        with session(self.engine) as s:
-            rec = s.get(RunRecord, run_id)
-            if rec:
-                s.delete(rec)
-                s.commit()
-        await asyncio.to_thread(self.paths(run_id).remove)
+        await asyncio.to_thread(self._delete_locked, run_id)
+
+    def _delete_locked(self, run_id: str) -> None:
+        with self.run_locks[run_id]:
+            with session(self.engine) as s:
+                rec = s.get(RunRecord, run_id)
+                if rec:
+                    s.delete(rec)
+                    s.commit()
+            self.paths(run_id).remove()
+        self.run_locks.pop(run_id, None)
 
     def append_event(self, run_id: str, type_: str, **payload) -> dict:
         event = {"type": type_, "run_id": run_id, "timestamp": now_iso()} | payload
@@ -240,6 +249,10 @@ class RunManager:
                 s.commit()
 
     def _check_liveness(self, run_id: str) -> None:
+        with self.run_locks[run_id]:
+            self._check_liveness_locked(run_id)
+
+    def _check_liveness_locked(self, run_id: str) -> None:
         with session(self.engine) as s:
             rec = s.get(RunRecord, run_id)
         if rec is None or rec.status in TERMINAL_STATUSES:
@@ -253,7 +266,8 @@ class RunManager:
                 and handle.is_alive()
             ):
                 handle.terminate()
-                self.finalize(run_id, "cancelled")
+                if not _has_unread_terminal(self.paths(run_id).events):
+                    self.finalize(run_id, "cancelled")
                 return
             if handle.is_alive():
                 return
@@ -272,7 +286,8 @@ class RunManager:
             if requested and time.monotonic() - requested > CANCEL_GRACE_SECONDS:
                 assert rec.pid is not None
                 terminate_pid(rec.pid, run_id)
-                self.finalize(run_id, "cancelled")
+                if not _has_unread_terminal(self.paths(run_id).events):
+                    self.finalize(run_id, "cancelled")
         else:
             if _has_unread_terminal(self.paths(run_id).events):
                 return
