@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Side runner test page</title>
+    <style>
+      body { font-family: sans-serif; margin: 40px; background: #f6f7fb; color: #1d2340; }
+      .card { background: #fff; border-radius: 12px; padding: 24px 32px; max-width: 560px;
+              box-shadow: 0 2px 12px rgba(0, 0, 0, .08); }
+      input { padding: 8px; font-size: 16px; width: 280px; }
+      button { padding: 8px 16px; font-size: 16px; background: #4f46e5; color: #fff;
+               border: 0; border-radius: 6px; }
+      .spacer { height: 1600px; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Hello from Side</h1>
+      <p>A static page used by the <code>side_runner</code> tests.</p>
+      <label for="q">Search</label>
+      <input id="q" type="text" placeholder="Type something" />
+      <button id="go" onclick="document.getElementById('out').textContent = 'Searched: ' + document.getElementById('q').value">Go</button>
+      <p id="out"></p>
+    </div>
+    <div class="spacer"></div>
+    <p>Bottom of the page.</p>
+  </body>
+</html>

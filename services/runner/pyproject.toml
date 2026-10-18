@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "side-runner"
+version = "0.1.0"
+description = "Side episode runner: executes one BrowserGym episode and writes the Side artifact layout"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "browsergym-core>=0.13",
+    "numpy>=1.14",
+    "Pillow>=10.1",
+]
+
+[project.optional-dependencies]
+miniwob = ["browsergym-miniwob>=0.13"]
+openai = ["openai>=1.0"]
+anthropic = ["anthropic>=0.30"]
+test = [
+    "pytest>=7",
+    "jsonschema>=4.18",
+    "rfc3339-validator>=0.1.4",
+    "PyYAML>=6",
+]
+
+[project.scripts]
+side-runner = "side_runner.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/side_runner"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "browser: launches a real (headless) Chromium via Playwright",
+    "miniwob: needs MINIWOB_URL (see `make setup-miniwob`)",
+]
+filterwarnings = ["ignore::UserWarning:gymnasium.*:", "ignore::DeprecationWarning"]
