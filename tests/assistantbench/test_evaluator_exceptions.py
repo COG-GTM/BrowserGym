@@ -34,7 +34,7 @@ def test_parse_fallbacks_preserved():
 
 
 def test_deeply_nested_json_falls_back_to_string():
-    deep = "[" * 1100 + "0" + "]" * 1100
+    deep = "[" * 100000 + "0" + "]" * 100000
     assert question_scorer(deep, "abc") == (0.0, 1.0)
     assert parse_answer([deep]) == (deep, "string")
     assert parse_answer([deep, deep]) == ([deep, deep], "string list")
