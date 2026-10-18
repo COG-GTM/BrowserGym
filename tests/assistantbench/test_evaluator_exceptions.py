@@ -33,6 +33,14 @@ def test_parse_fallbacks_preserved():
     assert question_scorer('{"a": 1}', "{'a': 1}") == (1.0, 1.0)
 
 
+def test_deeply_nested_json_falls_back_to_string():
+    deep = "[" * 1100 + "0" + "]" * 1100
+    assert question_scorer(deep, "abc") == (0.0, 1.0)
+    assert parse_answer([deep]) == (deep, "string")
+    assert parse_answer([deep, deep]) == ([deep, deep], "string list")
+    assert fix_prediction(deep, [{"a": 1}], "json") == ([deep], True)
+
+
 @pytest.mark.parametrize("exc", [KeyboardInterrupt, SystemExit])
 def test_interrupts_propagate_from_json_loads(exc):
     with mock.patch.object(evaluator.json, "loads", side_effect=exc):
