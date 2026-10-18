@@ -1,8 +1,10 @@
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import Any
 
 import numpy as np
 import playwright.sync_api
+
+from .typedefs import Goal
 
 
 class AbstractBrowserTask(ABC):
@@ -12,23 +14,27 @@ class AbstractBrowserTask(ABC):
     """
 
     @classmethod
-    def get_task_id(cls):
+    def get_task_id(cls) -> str:
         raise NotImplementedError
 
-    def __init__(self, seed: int) -> None:
+    def __init__(self, seed: int | None) -> None:
         # initiate a random number generator
         self.random = np.random.RandomState(seed)
 
         # task properties, will be used to set up the browsergym environment
         # default values, can be overriden in children classes
-        self.viewport = {"width": 1280, "height": 720}
-        self.slow_mo = 1000  # ms
-        self.timeout = 5000  # ms
-        self.locale = None  # see https://playwright.dev/python/docs/api/class-browser#browser-new-context-option-locale
-        self.timezone_id = None  # see https://playwright.dev/python/docs/api/class-browser#browser-new-context-option-timezone-id
+        self.viewport: playwright.sync_api.ViewportSize | None = {"width": 1280, "height": 720}
+        self.slow_mo: int | None = 1000  # ms
+        self.timeout: int | None = 5000  # ms
+        self.locale: str | None = (
+            None  # see https://playwright.dev/python/docs/api/class-browser#browser-new-context-option-locale
+        )
+        self.timezone_id: str | None = (
+            None  # see https://playwright.dev/python/docs/api/class-browser#browser-new-context-option-timezone-id
+        )
 
     @abstractmethod
-    def setup(self, page: playwright.sync_api.Page) -> tuple[str, dict]:
+    def setup(self, page: playwright.sync_api.Page) -> tuple[Goal, dict[str, Any]]:
         """
         Set up everything needed to execute the task.
 
@@ -42,8 +48,8 @@ class AbstractBrowserTask(ABC):
 
     @abstractmethod
     def validate(
-        self, page: playwright.sync_api.Page, chat_messages: list[str]
-    ) -> Tuple[float, bool, str, dict]:
+        self, page: playwright.sync_api.Page, chat_messages: list[dict[str, Any]]
+    ) -> tuple[float, bool, str, dict[str, Any]]:
         """
         Validate the task was completed successfully
 
@@ -59,7 +65,7 @@ class AbstractBrowserTask(ABC):
 
         """
 
-    def cheat(self, page: playwright.sync_api.Page, chat_messages: list[str]) -> None:
+    def cheat(self, page: playwright.sync_api.Page, chat_messages: list[dict[str, Any]]) -> None:
         """
         Solve the task using a pre-defined solution (optional).
 
@@ -76,10 +82,10 @@ class AbstractBrowserTask(ABC):
 
 class OpenEndedTask(AbstractBrowserTask):
     @classmethod
-    def get_task_id(cls):
+    def get_task_id(cls) -> str:
         return "openended"
 
-    def __init__(self, seed: int, start_url: str, goal: str = None) -> None:
+    def __init__(self, seed: int | None, start_url: str, goal: str | None = None) -> None:
         """
         Args:
             seed: random seed.
@@ -91,7 +97,7 @@ class OpenEndedTask(AbstractBrowserTask):
         self.start_url = start_url
         self.goal = goal
 
-    def setup(self, page: playwright.sync_api.Page) -> tuple[str, dict]:
+    def setup(self, page: playwright.sync_api.Page) -> tuple[Goal, dict[str, Any]]:
         page.goto(self.start_url, timeout=10000)
         return self.goal, {}
 
@@ -99,8 +105,8 @@ class OpenEndedTask(AbstractBrowserTask):
         pass
 
     def validate(
-        self, page: playwright.sync_api.Page, chat_messages: list[str]
-    ) -> Tuple[float, bool, str, dict]:
+        self, page: playwright.sync_api.Page, chat_messages: list[dict[str, Any]]
+    ) -> tuple[float, bool, str, dict[str, Any]]:
         reward, done, msg, info = 0, False, "", {}
 
         for message in chat_messages:

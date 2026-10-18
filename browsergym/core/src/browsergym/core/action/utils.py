@@ -1,6 +1,13 @@
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import playwright.sync_api
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+# NOTE: the source of every function in this module is injected into the code executed by
+# HighLevelActionSet, where only `playwright` and `Literal` are in scope. Annotations must only
+# reference those (or builtins), or be quoted.
 
 
 def get_elem_by_bid(
@@ -50,8 +57,10 @@ def get_elem_by_bid(
 
 
 def highlight_by_box(
-    page: playwright.sync_api.Page, box: dict, color: Literal["blue", "red"] = "blue"
-):
+    page: playwright.sync_api.Page,
+    box: playwright.sync_api.FloatRect,
+    color: Literal["blue", "red"] = "blue",
+) -> None:
     """Highlights the target element based on its bounding box attributes."""
 
     assert color in ("blue", "red")
@@ -95,7 +104,7 @@ const waveInterval = setInterval(() => {{
 
 def smooth_move_visual_cursor_to(
     page: playwright.sync_api.Page, x: float, y: float, speed: float = 400
-):
+) -> None:
     """
     Smoothly moves the visual cursor to a specific point, with constant
     movement speed.
@@ -202,8 +211,11 @@ def smooth_move_visual_cursor_to(
 
 
 def check_for_overlay(
-    page: playwright.sync_api.Page, bid: str, element: playwright.sync_api.ElementHandle, box: dict
-):
+    page: playwright.sync_api.Page,
+    bid: str,
+    element: playwright.sync_api.Locator,
+    box: playwright.sync_api.FloatRect,
+) -> bool:
     if not element:
         return False
 
@@ -240,12 +252,12 @@ def check_for_overlay(
 
 def add_demo_mode_effects(
     page: playwright.sync_api.Page,
-    elem: playwright.sync_api.ElementHandle,
+    elem: playwright.sync_api.Locator,
     bid: str,
     demo_mode: Literal["off", "default", "all_blue", "only_visible_elements"],
     move_cursor: bool = True,
     highlight_box: bool = True,
-):
+) -> None:
     if demo_mode == "off":
         return
 
@@ -278,7 +290,7 @@ def add_demo_mode_effects(
             highlight_by_box(page, box, color=color)
 
 
-def call_fun(fun: callable, retry_with_force: bool):
+def call_fun(fun: "Callable[..., None]", retry_with_force: bool) -> None:
     try:
         fun(force=False)
     except playwright.sync_api.TimeoutError as e:
@@ -288,7 +300,7 @@ def call_fun(fun: callable, retry_with_force: bool):
             raise e
 
 
-def map_coordinates(page, x, y):
+def map_coordinates(page: playwright.sync_api.Page, x: float, y: float) -> tuple[float, float]:
     """
     Maps screenshot coordinates back to page coordinates based on bgym_scale_factor.
 

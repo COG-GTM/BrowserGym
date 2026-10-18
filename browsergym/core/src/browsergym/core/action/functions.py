@@ -1,5 +1,6 @@
 # these are placeholders
 # all these symbols will be available in browsergym actions
+from collections.abc import Callable
 from typing import Literal
 
 import playwright.sync_api
@@ -13,10 +14,11 @@ from .utils import (
     smooth_move_visual_cursor_to,
 )
 
-page: playwright.sync_api.Page = None
-send_message_to_user: callable = None
-report_infeasible_instructions: callable = None
-demo_mode: Literal["off", "default", "all_blue", "only_visible_elements"] = None
+# placeholders are None here, they are set in the execution context of the action code
+page: playwright.sync_api.Page = None  # pyright: ignore[reportAssignmentType]
+send_message_to_user: Callable[[str], None] = None  # pyright: ignore[reportAssignmentType]
+report_infeasible_instructions: Callable[[str], None] = None  # type: ignore
+demo_mode: Literal["off", "default", "all_blue", "only_visible_elements"] = None  # type: ignore
 retry_with_force: bool = False
 
 """IMPORTANT
@@ -70,7 +72,7 @@ def fill(bid: str, value: str, enable_autocomplete_menu: bool = False):
     elem = get_elem_by_bid(page, bid, demo_mode != "off")
     add_demo_mode_effects(page, elem, bid, demo_mode=demo_mode, move_cursor=False)
 
-    def do(force: bool):
+    def do(force: bool) -> None:
         if demo_mode != "off":
             # Demo mode: full typing for visual effect
             delay = max(2000 / len(value), 10)
@@ -100,7 +102,7 @@ def check(bid: str):
     elem = get_elem_by_bid(page, bid, demo_mode != "off")
     add_demo_mode_effects(page, elem, bid, demo_mode=demo_mode, move_cursor=True)
 
-    def do(force: bool):
+    def do(force: bool) -> None:
         elem.check(force=force, timeout=500)
 
     call_fun(do, retry_with_force)
@@ -117,7 +119,7 @@ def uncheck(bid: str):
     elem = get_elem_by_bid(page, bid, demo_mode != "off")
     add_demo_mode_effects(page, elem, bid, demo_mode=demo_mode, move_cursor=True)
 
-    def do(force: bool):
+    def do(force: bool) -> None:
         elem.uncheck(force=force, timeout=500)
 
     call_fun(do, retry_with_force)
@@ -136,7 +138,7 @@ def select_option(bid: str, options: str | list[str]):
     elem = get_elem_by_bid(page, bid, demo_mode != "off")
     add_demo_mode_effects(page, elem, bid, demo_mode=demo_mode, move_cursor=False)
 
-    def do(force: bool):
+    def do(force: bool) -> None:
         elem.select_option(options, force=force, timeout=500)
 
     call_fun(do, retry_with_force)
@@ -159,7 +161,7 @@ def click(
     elem = get_elem_by_bid(page, bid, demo_mode != "off")
     add_demo_mode_effects(page, elem, bid, demo_mode=demo_mode, move_cursor=True)
 
-    def do(force: bool):
+    def do(force: bool) -> None:
         elem.click(button=button, modifiers=modifiers, force=force, timeout=500)
 
     call_fun(do, retry_with_force)
@@ -182,7 +184,7 @@ def dblclick(
     elem = get_elem_by_bid(page, bid, demo_mode != "off")
     add_demo_mode_effects(page, elem, bid, demo_mode=demo_mode, move_cursor=True)
 
-    def do(force: bool):
+    def do(force: bool) -> None:
         elem.dblclick(button=button, modifiers=modifiers, force=force, timeout=500)
 
     call_fun(do, retry_with_force)
@@ -201,7 +203,7 @@ def hover(bid: str):
         page, elem, bid, demo_mode=demo_mode, move_cursor=True, highlight_box=False
     )
 
-    def do(force: bool):
+    def do(force: bool) -> None:
         elem.hover(force=force, timeout=500)
 
     call_fun(do, retry_with_force)
@@ -299,10 +301,10 @@ def scroll_at(x: int, y: int, dx: int, dy: int):
     Examples:
         scroll_at(50, 100, -50, -100)
     """
-    x, y = map_coordinates(page, x, y)  # map coordinates to page coordinates
-    dx, dy = map_coordinates(page, dx, dy)  # map coordinates to page coordinates
-    page.mouse.move(x, y)  # position pointer
-    page.mouse.wheel(dx, dy)
+    mapped_x, mapped_y = map_coordinates(page, x, y)  # map coordinates to page coordinates
+    mapped_dx, mapped_dy = map_coordinates(page, dx, dy)  # map coordinates to page coordinates
+    page.mouse.move(mapped_x, mapped_y)  # position pointer
+    page.mouse.wheel(mapped_dx, mapped_dy)
 
 
 # https://playwright.dev/python/docs/api/class-mouse#mouse-move
