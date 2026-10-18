@@ -84,6 +84,10 @@ def test_anybox_eq_with_array_bounds():
     assert space != AnyBox(low=low, high=high + 1, shape=(-1, 3), dtype=np.float64)
     assert space.contains(np.array([[0.5, 1.5, 2.5]]))
     assert not space.contains(np.array([[0.5, 2.5, 2.5]]))
+    # malformed input must be rejected, not raise a broadcasting error against the bounds
+    assert not space.contains([[0, 0], [0, 0]])
+    assert not space.contains(np.zeros((2, 2)))
+    assert not space.contains([0.5, 1.5, 2.5])
 
 
 def test_unicode():

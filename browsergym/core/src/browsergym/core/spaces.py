@@ -111,25 +111,28 @@ class AnyBox(Space[NDArray[Any]]):
 
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
-        if not isinstance(x, np.ndarray):
+        if isinstance(x, np.ndarray):
+            raw = x
+        else:
             try:
                 raw = np.asarray(x)
                 x = np.asarray(x, dtype=self.dtype)
             except (ValueError, TypeError, OverflowError):
                 return False
-            # older numpy silently wraps out-of-range values on conversion, check them before the cast
-            if raw.dtype.kind in "biuf" and not (
-                np.all(raw >= self.low) and np.all(raw <= self.high)
-            ):
-                return False
 
-        return bool(
+        if not (
             np.can_cast(x.dtype, self.dtype)
             and len(x.shape) == len(self.shape)
             and all([dim in (xdim, -1) for xdim, dim in zip(x.shape, self.shape)])
-            and np.all(x >= self.low)
-            and np.all(x <= self.high)
-        )
+        ):
+            return False
+
+        # check bounds on the pre-cast values, older numpy silently wraps out-of-range values
+        values = raw if raw.dtype.kind in "biuf" else x
+        try:
+            return bool(np.all(values >= self.low) and np.all(values <= self.high))
+        except ValueError:  # bounds not broadcastable to x
+            return False
 
     def __repr__(self) -> str:
         """Gives a string representation of this space."""
