@@ -1302,9 +1302,12 @@ def test_forced_actions(retry_with_force):
     if retry_with_force:
         assert not obs["last_action_error"]
         assert checkbox.get("checked", False) == False
+        assert info["action_exec_timeout"] == 0
     else:
-        assert obs["last_action_error"]
+        assert obs["last_action_error"].startswith("TimeoutError: ")
         assert checkbox.has_attr("checked")
+        # the 500ms Playwright timeout of click() is reported so that it can be deducted from timing
+        assert info["action_exec_timeout"] == 0.5
 
     env.close()
 
