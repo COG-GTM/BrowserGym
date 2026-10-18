@@ -3,7 +3,7 @@ import json
 
 import numpy as np
 
-from browsergym.experiments.benchmark import task_metadata
+from browsergym.experiments.benchmark.metadata.utils import task_metadata
 
 # for posterity
 
@@ -113,10 +113,12 @@ def print_miniwob_train_test_splits():
 
     def move_random_group(from_groups: set, to_groups: set):
         # pick uniformly among tasks (weighted sampling among groups)
-        probs = np.asarray([float(group_counts[group]) for group in from_groups])
+        # sorted for a hash-independent candidate order, so the seeded RNG is reproducible
+        candidates = sorted(from_groups)
+        probs = np.asarray([float(group_counts[group]) for group in candidates])
         probs = probs / probs.sum()
         # sample a group
-        group = rng.choice(list(from_groups), size=1, p=probs)[0]
+        group = candidates[rng.choice(len(candidates), p=probs)]
         # move between sets
         to_groups.add(group)
         from_groups.remove(group)
