@@ -154,9 +154,7 @@ def test_intent_template_id_selection(wa_env, intent_template_id):
     task = WebArenaLiteTask(seed=0, intent_template_id=intent_template_id)
 
     expected = sorted(
-        conf["task_id"]
-        for conf in LITE_CONFIGS
-        if conf["intent_template_id"] == intent_template_id
+        conf["task_id"] for conf in LITE_CONFIGS if conf["intent_template_id"] == intent_template_id
     )
     assert expected
     assert sorted(conf["task_id"] for conf in task.task_configs) == expected
