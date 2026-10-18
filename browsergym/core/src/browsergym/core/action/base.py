@@ -1,5 +1,7 @@
+import functools
+import threading
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 import playwright.sync_api
 
@@ -44,6 +46,45 @@ class AbstractActionSet(ABC):
         pass
 
 
+_MAX_REGISTERED_PYTHON_INCLUDES = 32
+_registered_python_includes: dict[str, None] = {}
+_registered_python_includes_lock = threading.Lock()
+
+
+def register_python_includes(includes: str) -> None:
+    """
+    Registers a static code prefix (e.g. the function definitions of an action set) so that
+    `execute_python_code` can compile it once and reuse the code object, instead of recompiling it
+    on every call. Only the most recently registered prefixes are kept.
+
+    Args:
+        includes: the code prefix, as a string.
+    """
+    if not includes:
+        return
+    with _registered_python_includes_lock:
+        _registered_python_includes.pop(includes, None)
+        _registered_python_includes[includes] = None
+        while len(_registered_python_includes) > _MAX_REGISTERED_PYTHON_INCLUDES:
+            del _registered_python_includes[next(iter(_registered_python_includes))]
+
+
+@functools.lru_cache(maxsize=_MAX_REGISTERED_PYTHON_INCLUDES)
+def _compile_python_includes(includes: str):
+    return compile(includes, "<browsergym_includes>", "exec")
+
+
+def _split_python_includes(code: str) -> tuple[Optional[str], str]:
+    with _registered_python_includes_lock:
+        candidates = list(_registered_python_includes)
+    # pick the longest match, action sets with more actions extend the includes of smaller ones
+    matches = [includes for includes in candidates if code.startswith(includes)]
+    if not matches:
+        return None, code
+    includes = max(matches, key=len)
+    return includes, code[len(includes) :]
+
+
 def execute_python_code(
     code: str,
     page: playwright.sync_api.Page,
@@ -70,4 +111,8 @@ def execute_python_code(
         "DEMO_MODE": get_global_demo_mode(),
     }
 
+    # the registered static prefix is compiled once and cached, only the remainder is compiled here
+    includes, code = _split_python_includes(code)
+    if includes is not None:
+        exec(_compile_python_includes(includes), globals)
     exec(code, globals)

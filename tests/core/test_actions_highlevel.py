@@ -1361,3 +1361,82 @@ def test_iframe_bid():
 
 if __name__ == "__main__":
     test_scroll()
+
+
+class _RecordingPage:
+    def __init__(self):
+        self.waits = []
+
+    def wait_for_timeout(self, timeout):
+        self.waits.append(timeout)
+
+
+def test_python_includes_compiled_once():
+    from browsergym.core.action import base
+
+    action_set = HighLevelActionSet(subsets=["bid", "nav"], demo_mode="off")
+    page = _RecordingPage()
+    messages = []
+    base._compile_python_includes.cache_clear()
+
+    for wait_ms in (10, 20, 30):
+        code = action_set.to_python_code(f"noop({wait_ms})")
+        assert code.startswith(action_set.python_includes)
+        base.execute_python_code(code, page, messages.append, messages.append)
+
+    assert page.waits == [10, 20, 30]
+    cache_info = base._compile_python_includes.cache_info()
+    assert cache_info.misses == 1
+    assert cache_info.hits == 2
+
+
+def test_python_includes_fresh_namespace_per_step():
+    from browsergym.core.action import base
+
+    action_set = HighLevelActionSet(subsets=["bid"], demo_mode="off")
+    action_set.to_python_code("noop()")  # registers the includes
+    messages = []
+
+    base.execute_python_code(
+        action_set.python_includes + "leak = 1\n", None, messages.append, messages.append
+    )
+    base.execute_python_code(
+        action_set.python_includes + "send_message_to_user(str('leak' in globals()))\n",
+        None,
+        messages.append,
+        messages.append,
+    )
+    assert messages == ["False"]
+
+
+def test_python_includes_unregistered_code_unchanged():
+    from browsergym.core.action import base
+
+    messages = []
+    base.execute_python_code(
+        "def f():\n    return 'ok'\nsend_message_to_user(f())\n",
+        None,
+        messages.append,
+        messages.append,
+    )
+    assert messages == ["ok"]
+
+    action_set = HighLevelActionSet(subsets=["bid"], demo_mode="off")
+    code = action_set.to_python_code("noop()")
+    with pytest.raises(ZeroDivisionError):
+        base.execute_python_code(code + "1 / 0\n", _RecordingPage(), messages.append, None)
+
+
+def test_python_includes_longest_prefix_wins():
+    from browsergym.core.action import base
+
+    large_set = HighLevelActionSet(subsets=["bid", "nav"], demo_mode="off")
+    small_set = HighLevelActionSet(subsets=["bid"], demo_mode="off")
+    assert large_set.python_includes.startswith(small_set.python_includes)
+
+    large_code = large_set.to_python_code("noop(5)")
+    small_set.to_python_code("noop()")  # registered after the larger set
+
+    includes, rest = base._split_python_includes(large_code)
+    assert includes == large_set.python_includes
+    assert rest == "noop(5)\n"
