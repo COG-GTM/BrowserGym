@@ -175,4 +175,17 @@ describe("RunReplayPlayer", () => {
     expect(await screen.findByText("'Ready'")).toBeInTheDocument();
     expect(load).toHaveBeenCalledTimes(2);
   });
+
+  it("keeps one in-flight request across live step replacements", async () => {
+    const base = { ...(step0 as StepDetail), axtree_txt: null } as StepDetail;
+    let resolve!: (d: StepDetail) => void;
+    const load = vi.fn(() => new Promise<StepDetail>((r) => (resolve = r)));
+    const { rerender } = render(<RunReplayPlayer run={flightRun} steps={[base]} getStepDetail={load} />);
+    await act(async () => {});
+    rerender(<RunReplayPlayer run={flightRun} steps={[{ ...base }]} getStepDetail={load} />);
+    rerender(<RunReplayPlayer run={flightRun} steps={[{ ...base }]} getStepDetail={load} />);
+    await act(async () => resolve({ ...base, axtree_txt: "RootWebArea 'Slow'" }));
+    expect(await screen.findByText("'Slow'")).toBeInTheDocument();
+    expect(load).toHaveBeenCalledTimes(1);
+  });
 });

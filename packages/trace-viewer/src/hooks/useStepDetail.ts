@@ -3,44 +3,62 @@ import type { Step, StepDetail } from "../types";
 
 export type StepDetailLoader = (index: number) => StepDetail | undefined | Promise<StepDetail | undefined>;
 
-type Settled = { entries: Map<number, StepDetail>; step: Step | StepDetail; error: unknown };
+interface Cache {
+  scope: string | undefined;
+  entries: Map<number, StepDetail>;
+  inflight: Set<number>;
+  /** Empty/failed loads, keyed by index, remembered for the `Step` object they were requested for. */
+  misses: Map<number, { step: Step | StepDetail; error: unknown }>;
+}
+
+const newCache = (scope: string | undefined): Cache => ({
+  scope,
+  entries: new Map(),
+  inflight: new Set(),
+  misses: new Map(),
+});
 
 /**
  * Returns the StepDetail for `step`, loading it lazily via `load`. Loaded details are cached per index
- * (reset when `scope`, e.g. the run id, changes). An empty or failed load is not cached: it is retried
- * when the step is revisited or its `Step` object is replaced (e.g. a live run publishes an update).
+ * (reset when `scope`, e.g. the run id, changes). At most one request per index is in flight; an empty
+ * or failed load is retried when the step is revisited or its `Step` object is replaced (live update).
  */
 export function useStepDetail(step: Step | StepDetail | undefined, load?: StepDetailLoader, scope?: string) {
-  const cache = useRef({ scope, entries: new Map<number, StepDetail>() });
-  if (cache.current.scope !== scope) cache.current = { scope, entries: new Map() };
-  const entries = cache.current.entries;
-  const [, force] = useState(0);
-  const [settled, setSettled] = useState<Settled | null>(null);
+  const ref = useRef<Cache>(newCache(scope));
+  if (ref.current.scope !== scope) ref.current = newCache(scope);
+  const cache = ref.current;
+  const [version, bump] = useState(0);
   const index = step?.index;
 
   useEffect(() => {
-    if (!load || !step || index === undefined || entries.has(index)) return;
-    let cancelled = false;
-    Promise.resolve(load(index))
-      .then((d) => {
-        if (cancelled) return;
-        if (d) {
-          entries.set(index, d);
-          force((n) => n + 1);
-        } else setSettled({ entries, step, error: null });
-      })
-      .catch((e) => !cancelled && setSettled({ entries, step, error: e }));
-    return () => {
-      cancelled = true;
-    };
-  }, [step, index, load, entries]);
+    cache.misses.clear();
+  }, [index, cache]);
 
-  const current = settled && settled.entries === entries && settled.step === step ? settled : null;
-  const loaded = index !== undefined ? entries.get(index) : undefined;
+  useEffect(() => {
+    if (!load || !step || index === undefined) return;
+    if (cache.entries.has(index) || cache.inflight.has(index) || cache.misses.get(index)?.step === step) return;
+    cache.inflight.add(index);
+    const settle = (detail: StepDetail | undefined, error: unknown) => {
+      cache.inflight.delete(index);
+      if (detail) cache.entries.set(index, detail);
+      else cache.misses.set(index, { step, error });
+      bump((n) => n + 1);
+    };
+    Promise.resolve()
+      .then(() => load(index))
+      .then(
+        (d) => settle(d, null),
+        (e) => settle(undefined, e ?? new Error("Failed to load step detail")),
+      );
+  }, [step, index, load, cache, version]);
+
+  const loaded = index !== undefined ? cache.entries.get(index) : undefined;
+  const miss = index !== undefined ? cache.misses.get(index) : undefined;
+  const settledMiss = miss && miss.step === step ? miss : undefined;
   const detail: StepDetail | undefined = index !== undefined ? loaded ?? step : undefined;
   return {
     detail,
-    loading: Boolean(load && index !== undefined && !loaded && !current),
-    error: current?.error ?? null,
+    loading: Boolean(load && index !== undefined && !loaded && !settledMiss),
+    error: settledMiss?.error ?? null,
   };
 }
