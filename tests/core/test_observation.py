@@ -869,3 +869,38 @@ def test_get_obs_reuses_single_cdp_session(scale_factor):
     assert np.array_equal(obs["screenshot"], reference_screenshot)
 
     env.close()
+
+
+def test_extract_screenshot_tracks_dpr_changes():
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": TEST_PAGE},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        viewport=__VIEWPORT,
+        timeout=__TIMEOUT,
+    )
+    env.reset()
+    page = env.unwrapped.page
+
+    screenshot = extract_screenshot(page)
+    assert screenshot.shape == (__VIEWPORT["height"], __VIEWPORT["width"], 3)
+
+    # change the page DPR externally (e.g. browser zoom) without changing the viewport
+    other_cdp = page.context.new_cdp_session(page)
+    other_cdp.send(
+        "Emulation.setDeviceMetricsOverride",
+        {
+            "width": __VIEWPORT["width"],
+            "height": __VIEWPORT["height"],
+            "deviceScaleFactor": 2,
+            "mobile": False,
+        },
+    )
+    assert page.evaluate("() => window.devicePixelRatio") == 2
+
+    screenshot = extract_screenshot(page)
+    assert screenshot.shape == (__VIEWPORT["height"], __VIEWPORT["width"], 3)
+
+    other_cdp.detach()
+    env.close()

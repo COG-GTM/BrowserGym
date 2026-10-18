@@ -135,18 +135,6 @@ def _post_extract(page: playwright.sync_api.Page):
                 raise e
 
 
-def _get_native_device_pixel_ratio(page: playwright.sync_api.Page) -> float:
-    """
-    Device pixel ratio of the page without any BrowserGym override (cached on the page object,
-    it is fixed by the browser context for a fixed viewport).
-    """
-    dpr = getattr(page, "_bgym_native_device_pixel_ratio", None)
-    if dpr is None:
-        dpr = page.evaluate("() => window.devicePixelRatio")
-        page._bgym_native_device_pixel_ratio = dpr
-    return dpr
-
-
 def extract_screenshot(page: playwright.sync_api.Page, cdp: playwright.sync_api.CDPSession = None):
     """
     Extracts the screenshot image of a Playwright page using Chrome DevTools Protocol.
@@ -164,10 +152,13 @@ def extract_screenshot(page: playwright.sync_api.Page, cdp: playwright.sync_api.
     scale_factor = getattr(page, "_bgym_scale_factor", 1.0)
     viewport = page.viewport_size
 
-    # With a fixed viewport, no scaling and a native DPR of 1, the device metrics override below
-    # would be a no-op: skip it to save two round-trips (and a potential relayout) per screenshot.
+    # With a fixed viewport, no scaling and a current DPR of 1, the device metrics override below
+    # would be a no-op: skip it to save a round-trip (and a potential relayout) per screenshot.
+    # The DPR is checked live since it can change (e.g. browser zoom) without a viewport change.
     needs_metrics_override = (
-        scale_factor != 1.0 or viewport is None or _get_native_device_pixel_ratio(page) != 1.0
+        scale_factor != 1.0
+        or viewport is None
+        or page.evaluate("() => window.devicePixelRatio") != 1.0
     )
 
     with _cdp_session(page, cdp) as cdp:
