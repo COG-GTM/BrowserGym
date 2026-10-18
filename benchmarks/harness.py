@@ -9,6 +9,7 @@ import statistics
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Optional
 
@@ -134,6 +135,20 @@ class Runner:
             return max(1, self.rounds_override)
         return max(2, int(round(base * self.scale)))
 
+    @contextmanager
+    def guard(self, label: str):
+        """Run the block under the timeout watchdog (also used for untimed browser setup)."""
+        watchdog = None
+        if self.timeout and self.on_timeout:
+            watchdog = threading.Timer(self.timeout, self.on_timeout, args=(label,))
+            watchdog.daemon = True
+            watchdog.start()
+        try:
+            yield
+        finally:
+            if watchdog is not None:
+                watchdog.cancel()
+
     def bench(
         self,
         group: str,
@@ -151,16 +166,8 @@ class Runner:
             return None
         n = self.rounds_for(rounds)
         bench_id = self.make_id(group, name, size)
-        watchdog = None
-        if self.timeout and self.on_timeout:
-            watchdog = threading.Timer(self.timeout, self.on_timeout, args=(bench_id,))
-            watchdog.daemon = True
-            watchdog.start()
-        try:
+        with self.guard(bench_id):
             samples = measure(fn, rounds=n, warmup=warmup, setup=setup, teardown=teardown)
-        finally:
-            if watchdog is not None:
-                watchdog.cancel()
         result = BenchResult(
             id=bench_id,
             group=group,

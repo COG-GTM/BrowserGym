@@ -80,7 +80,16 @@ def _run_size(runner: Runner, ctx: Context, size: str, env) -> None:
     )
 
     # --- raw extraction on a marked page (as done inside BrowserEnv._get_obs)
-    _pre_extract(page, tags_to_mark=tags_to_mark)
+    def sel(*names: str) -> bool:
+        return any(runner.selected(GROUP, n, size) for n in names)
+
+    need_dom = sel("extra_properties", "flatten_axtree", "flatten_dom", "prune_html", "som_overlay")
+    need_axtree = sel("flatten_axtree")
+    dom = axtree = None
+    marked = need_dom or sel("dom_snapshot", "axtree", "focused_bid")
+    if marked:
+        with runner.guard(f"{GROUP}.mark[{size}]"):
+            _pre_extract(page, tags_to_mark=tags_to_mark)
     try:
         runner.bench(
             GROUP,
@@ -109,10 +118,16 @@ def _run_size(runner: Runner, ctx: Context, size: str, env) -> None:
             setup=gc_setup,
             params=params,
         )
-        dom = extract_dom_snapshot(page)
-        axtree = extract_merged_axtree(page)
+        # inputs for the pure-python benchmarks, only when one of them is selected
+        with runner.guard(f"{GROUP}.capture[{size}]"):
+            if need_dom:
+                dom = extract_dom_snapshot(page)
+            if need_axtree:
+                axtree = extract_merged_axtree(page)
     finally:
-        _post_extract(page)
+        if marked:
+            with runner.guard(f"{GROUP}.unmark[{size}]"):
+                _post_extract(page)
 
     runner.bench(
         GROUP,
@@ -143,9 +158,12 @@ def _run_size(runner: Runner, ctx: Context, size: str, env) -> None:
     )
 
     # --- pure-python processing used by agents
+    if not need_dom:
+        return
     extra = extract_dom_extra_properties(dom, scale_factor=1.0)
-    screenshot = extract_screenshot(page)
-    axtree_params = dict(params, axtree_nodes=len(axtree["nodes"]))
+    with runner.guard(f"{GROUP}.capture_screenshot[{size}]"):
+        screenshot = extract_screenshot(page)
+    axtree_params = dict(params, axtree_nodes=len(axtree["nodes"]) if axtree else None)
     runner.bench(
         GROUP,
         "flatten_axtree",

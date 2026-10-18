@@ -118,6 +118,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         timeout=args.timeout,
     )
 
+    if args.json:
+        Path(args.json).parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="bgym-bench-") as tmp:
         tmp = Path(tmp)
         page_dir = tmp / "pages"
@@ -140,10 +142,14 @@ def cmd_run(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                     flush=True,
                 )
-                if args.json:
-                    doc = _results_doc(args, runner, ctx, chromium, sizes, suites, None, bench_id)
-                    Path(args.json).write_text(json.dumps(doc, indent=2) + "\n", "utf-8")
-                os._exit(3)
+                try:
+                    if args.json:
+                        doc = _results_doc(
+                            args, runner, ctx, chromium, sizes, suites, None, bench_id
+                        )
+                        Path(args.json).write_text(json.dumps(doc, indent=2) + "\n", "utf-8")
+                finally:
+                    os._exit(3)
 
             runner.on_timeout = abort
             print(
