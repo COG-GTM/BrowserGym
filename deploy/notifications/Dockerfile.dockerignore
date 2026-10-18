@@ -1,0 +1,9 @@
+*
+!services/notifications/
+!deploy/scripts/
+!deploy/stubs/notifications/
+**/__pycache__
+**/*.egg-info
+**/.venv
+**/.pytest_cache
+**/*.db

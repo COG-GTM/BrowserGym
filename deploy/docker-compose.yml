@@ -1,0 +1,104 @@
+# Side local stack. Run from the repo root:  docker compose -f deploy/docker-compose.yml up --build
+# Copy deploy/.env.example to deploy/.env to override defaults (compose reads it automatically).
+name: side
+
+x-build-context: &repo-root ..
+
+volumes:
+  side-data:
+
+services:
+  api:
+    build:
+      context: *repo-root
+      dockerfile: deploy/api/Dockerfile
+    image: ${SIDE_IMAGE_PREFIX:-side}-api:${SIDE_IMAGE_TAG:-local}
+    init: true
+    shm_size: 1gb # chromium (runner subprocesses) needs more than the 64MB default /dev/shm
+    ports:
+      - "${SIDE_API_PORT:-8000}:8000"
+    environment:
+      SIDE_DATA_DIR: /data
+      SIDE_NOTIFY_URL: ${SIDE_NOTIFY_URL:-http://notifications:8010}
+      SIDE_CORS_ORIGINS: ${SIDE_CORS_ORIGINS:-http://localhost:3000}
+      SIDE_API_APP: ${SIDE_API_APP:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - side-data:/data
+    depends_on:
+      notifications:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "/opt/side/bin/healthcheck.py", "http://127.0.0.1:8000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+    restart: unless-stopped
+
+  notifications:
+    build:
+      context: *repo-root
+      dockerfile: deploy/notifications/Dockerfile
+    image: ${SIDE_IMAGE_PREFIX:-side}-notifications:${SIDE_IMAGE_TAG:-local}
+    init: true
+    ports:
+      - "${SIDE_NOTIFICATIONS_PORT:-8010}:8010"
+    environment:
+      SIDE_DATA_DIR: /data
+      EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
+      SIDE_NOTIFICATIONS_APP: ${SIDE_NOTIFICATIONS_APP:-}
+    volumes:
+      - side-data:/data
+    healthcheck:
+      test: ["CMD", "python", "/opt/side/bin/healthcheck.py", "http://127.0.0.1:8010/health", "--any"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 6
+    restart: unless-stopped
+
+  web:
+    build:
+      context: *repo-root
+      dockerfile: deploy/web/Dockerfile
+      args:
+        NEXT_PUBLIC_SIDE_API_URL: ${NEXT_PUBLIC_SIDE_API_URL:-http://localhost:8000/api/v1}
+        NEXT_PUBLIC_SIDE_MOCK: ${NEXT_PUBLIC_SIDE_MOCK:-0}
+    image: ${SIDE_IMAGE_PREFIX:-side}-web:${SIDE_IMAGE_TAG:-local}
+    init: true
+    ports:
+      - "${SIDE_WEB_PORT:-3000}:3000"
+    environment:
+      # Server-side (SSR / route handlers) calls go over the compose network.
+      SIDE_API_URL: ${SIDE_API_URL:-http://api:8000/api/v1}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 6
+    restart: unless-stopped
+
+  # One-off tools, not started by `up`:
+  #   docker compose -f deploy/docker-compose.yml run --rm runner python -m side_runner --run-id demo \
+  #     --task browsergym/openended --agent-json '{"type":"mock"}' --max-steps 3 --data-dir /data --goal hi
+  #   docker compose -f deploy/docker-compose.yml run --rm runner python /opt/side/bin/smoke-runner.py
+  runner:
+    profiles: ["tools"]
+    build:
+      context: *repo-root
+      dockerfile: deploy/runner/Dockerfile
+    image: ${SIDE_IMAGE_PREFIX:-side}-runner:${SIDE_IMAGE_TAG:-local}
+    init: true
+    shm_size: 1gb
+    environment:
+      SIDE_DATA_DIR: /data
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - side-data:/data
