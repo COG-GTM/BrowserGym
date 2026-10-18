@@ -121,7 +121,8 @@ def test_concurrent_tool_calls_on_real_browser(monkeypatch):
             )
             for obs, *_ in results:
                 assert obs["last_action_error"] == ""
-            scroll_y = await app_ctx.run(lambda: app_ctx.gym.unwrapped.page.evaluate("window.scrollY"))
+            page = app_ctx.gym.unwrapped.page
+            scroll_y = await app_ctx.run(page.evaluate, "window.scrollY")
             assert scroll_y > 0
 
             obs, *_ = await goto(EXAMPLE_URL)
