@@ -268,11 +268,14 @@ def _annotation_to_json_schema(annotation) -> dict:
     if annotation is inspect.Parameter.empty:
         return {"type": "string"}
 
-    if annotation in _JSON_SCHEMA_TYPES:
+    if isinstance(annotation, type) and annotation in _JSON_SCHEMA_TYPES:
         return {"type": _JSON_SCHEMA_TYPES[annotation]}
 
     origin = typing.get_origin(annotation)
     args = typing.get_args(annotation)
+
+    if origin is typing.Annotated:
+        return _annotation_to_json_schema(args[0])
 
     if origin is typing.Literal:
         values = list(args)
@@ -283,10 +286,10 @@ def _annotation_to_json_schema(annotation) -> dict:
         return schema
 
     if origin is typing.Union or origin is types.UnionType:
-        options = [arg for arg in args if arg is not type(None)]
-        if len(options) == 1:
-            return _annotation_to_json_schema(options[0])
-        return {"anyOf": [_annotation_to_json_schema(option) for option in options]}
+        options = [_annotation_to_json_schema(arg) for arg in args if arg is not type(None)]
+        if len(options) < len(args):
+            options.append({"type": "null"})
+        return {"anyOf": options}
 
     if origin in (list, tuple, set, frozenset):
         schema = {"type": "array"}
@@ -304,9 +307,22 @@ def _function_to_json_schema(func: callable) -> dict:
     """
     Builds a JSON schema describing the parameters of an action function.
     """
+    try:
+        # resolves postponed (string) annotations
+        type_hints = typing.get_type_hints(func, include_extras=True)
+    except Exception:
+        type_hints = {}
+
     parameters = {"type": "object", "properties": {}, "required": []}
     for param_name, param in inspect.signature(func).parameters.items():
-        parameters["properties"][param_name] = _annotation_to_json_schema(param.annotation)
+        annotation = type_hints.get(param_name, param.annotation)
+        if isinstance(annotation, str):
+            # get_type_hints failed on another parameter, resolve this one on its own
+            try:
+                annotation = eval(annotation, getattr(func, "__globals__", {}))
+            except Exception:
+                annotation = inspect.Parameter.empty
+        parameters["properties"][param_name] = _annotation_to_json_schema(annotation)
         if param.default is inspect.Parameter.empty:
             parameters["required"].append(param_name)
         else:

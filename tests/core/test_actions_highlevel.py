@@ -3,6 +3,7 @@ import os
 import pathlib
 import platform
 import re
+import typing
 
 import bs4
 import gymnasium as gym
@@ -1522,7 +1523,7 @@ def test_to_tool_description_custom_actions():
     assert tools[2]["parameters"] == {
         "type": "object",
         "properties": {
-            "text": {"type": "string", "default": None},
+            "text": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None},
             "flags": {"type": "array", "items": {"type": "string"}, "default": []},
         },
         "required": [],
@@ -1531,6 +1532,40 @@ def test_to_tool_description_custom_actions():
 
     anthropic_tools = action_set.to_tool_description(api="anthropic")
     assert anthropic_tools[1]["input_schema"] == custom_tool["parameters"]
+
+
+def _annotated_custom_action(
+    count: "int",
+    value: typing.Annotated[int, {"ge": 0}],
+    mode: typing.Optional[typing.Literal["a", "b"]] = None,
+    unresolved: "NotAType" = "x",
+):
+    """
+    Custom action with postponed, annotated and optional annotations.
+
+    Examples:
+        _annotated_custom_action(1, 2)
+    """
+    pass
+
+
+def test_to_tool_description_annotations():
+    action_set = HighLevelActionSet(subsets=["custom"], custom_actions=[_annotated_custom_action])
+    tool = action_set.to_tool_description(api="anthropic")[1]
+    assert tool["input_schema"] == {
+        "type": "object",
+        "properties": {
+            "count": {"type": "integer"},
+            "value": {"type": "integer"},
+            "mode": {
+                "anyOf": [{"type": "string", "enum": ["a", "b"]}, {"type": "null"}],
+                "default": None,
+            },
+            # unresolvable annotation falls back to string
+            "unresolved": {"type": "string", "default": "x"},
+        },
+        "required": ["count", "value"],
+    }
 
 
 @pytest.mark.parametrize("multiaction", [True, False])
