@@ -28,11 +28,15 @@ from browsergym.core.action.parsers import highlevel_action_parser
 from browsergym.core.chat import Chat
 
 from .agent import Agent
-from .utils import count_messages_token, count_tokens
+from .utils import count_messages_token, count_tokens_batch
 
 logger = logging.getLogger(__name__)
 
 SEED_MAX = 2 ^ 32  # arbitrary max value (exclusive), seems large enough
+
+# gzip level for per-step pickles: several times faster than the default (9) on MB-sized obs text,
+# for slightly larger files; readers are unaffected
+STEP_INFO_COMPRESSLEVEL = 4
 
 
 @dataclass
@@ -230,10 +234,10 @@ class StepInfo:
 
     def make_stats(self):
 
+        text_obs = {key: val for key, val in self.obs.items() if isinstance(val, str)}
         stats = {
-            f"n_token_{key}": count_tokens(val)
-            for key, val in self.obs.items()
-            if isinstance(val, str)
+            f"n_token_{key}": n_tokens
+            for key, n_tokens in zip(text_obs.keys(), count_tokens_batch(text_obs.values()))
         }
         stats.update(self.agent_info.pop("stats", {}))
 
@@ -268,12 +272,16 @@ class StepInfo:
                 # save the goal object only once (goal should never change once setup)
                 goal_object_file = Path(exp_dir) / "goal_object.pkl.gz"
                 if not goal_object_file.exists():
-                    with gzip.open(goal_object_file, "wb") as f:
+                    with gzip.open(
+                        goal_object_file, "wb", compresslevel=STEP_INFO_COMPRESSLEVEL
+                    ) as f:
                         pickle.dump(self.obs["goal_object"], f)
                 # set goal_object to a special placeholder value, which indicates it should be loaded from a separate file
                 self.obs["goal_object"] = None
 
-        with gzip.open(exp_dir / f"step_{self.step}.pkl.gz", "wb") as f:
+        with gzip.open(
+            exp_dir / f"step_{self.step}.pkl.gz", "wb", compresslevel=STEP_INFO_COMPRESSLEVEL
+        ) as f:
             pickle.dump(self, f)
 
         if save_json:
