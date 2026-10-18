@@ -67,37 +67,39 @@ class VisualWebArenaInstance(WebArenaInstance):
         # open a new page (tab) to perform the login
         page = page.context.new_page()
 
-        match site:
-            case "reddit":
-                username = self.credentials[site]["username"]
-                password = self.credentials[site]["password"]
-                page.goto(f"{url}")
-                page.get_by_role("link", name="Log in").click()
-                page.get_by_label("Username").fill(username)
-                page.get_by_label("Password").fill(password)
-                page.get_by_role("button", name="Log in").click()
-            case "shopping":
-                username = self.credentials[site]["username"]
-                password = self.credentials[site]["password"]
+        try:
+            match site:
+                case "reddit":
+                    username = self.credentials[site]["username"]
+                    password = self.credentials[site]["password"]
+                    page.goto(f"{url}")
+                    page.get_by_role("link", name="Log in").click()
+                    page.get_by_label("Username").fill(username)
+                    page.get_by_label("Password").fill(password)
+                    self._submit_login(page, page.get_by_role("button", name="Log in"))
+                case "shopping":
+                    username = self.credentials[site]["username"]
+                    password = self.credentials[site]["password"]
 
-                page.goto(f"{url}/customer/account/login/")
-                page.get_by_label("Email", exact=True).fill(username)
-                page.get_by_label("Password", exact=True).fill(password)
-                page.get_by_role("button", name="Sign In").click()
+                    page.goto(f"{url}/customer/account/login/")
+                    page.get_by_label("Email", exact=True).fill(username)
+                    page.get_by_label("Password", exact=True).fill(password)
+                    self._submit_login(page, page.get_by_role("button", name="Sign In"))
 
-            case "wikipedia":
-                page.goto(url)
+                case "wikipedia":
+                    page.goto(url)
 
-            case "classifieds":
-                username = self.credentials[site]["username"]
-                password = self.credentials[site]["password"]
-                page.goto(f"{url}/index.php?page=login")
-                page.locator("#email").fill(username)
-                page.locator("#password").fill(password)
-                page.get_by_role("button", name="Log in").click()
+                case "classifieds":
+                    username = self.credentials[site]["username"]
+                    password = self.credentials[site]["password"]
+                    page.goto(f"{url}/index.php?page=login")
+                    page.locator("#email").fill(username)
+                    page.locator("#password").fill(password)
+                    self._submit_login(page, page.get_by_role("button", name="Log in"))
 
-            case _:
-                raise ValueError
+                case _:
+                    raise ValueError
 
-        # release login page
-        page.close()
+        finally:
+            # release login page, even if the login failed
+            page.close()
