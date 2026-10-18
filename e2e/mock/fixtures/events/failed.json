@@ -1,0 +1,83 @@
+{
+  "description": "Run that fails after 3 steps (used for run ids starting with 'fail').",
+  "events": [
+    {
+      "type": "status",
+      "status": "queued"
+    },
+    {
+      "type": "status",
+      "status": "running"
+    },
+    {
+      "type": "log",
+      "log": "env.reset() done"
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 0,
+        "action": "noop()",
+        "thought": "Mock agent step 0",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 120,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "chat",
+      "chat": {
+        "role": "info",
+        "message": "Episode started"
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 1,
+        "action": "scroll(0, 200)",
+        "thought": "Mock agent step 1",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 121,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 2,
+        "action": "send_msg_to_user(\"I could not complete the task.\")",
+        "thought": "Mock agent step 2",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 122,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "chat",
+      "chat": {
+        "role": "assistant",
+        "message": "I could not complete the task."
+      }
+    },
+    {
+      "type": "status",
+      "status": "failed"
+    }
+  ]
+}

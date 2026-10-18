@@ -1,0 +1,30 @@
+{
+  "name": "@side/e2e",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Side end-to-end tests (Playwright Test): API contract tests + web user journeys",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "mock": "node mock/start.mjs",
+    "mock:prism": "prism mock ../contracts/openapi.yaml --host 127.0.0.1 --port 4010",
+    "mock:gateway": "node mock/gateway.mjs",
+    "test": "playwright test",
+    "test:api": "playwright test --project=api",
+    "test:web": "playwright test --project=web",
+    "test:web:reference": "E2E_BASE_URL=http://127.0.0.1:4000 playwright test --project=web",
+    "report": "playwright show-report",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@stoplight/prism-cli": "5.15.11",
+    "@types/node": "20.19.43",
+    "ajv": "8.17.1",
+    "ajv-formats": "3.0.1",
+    "typescript": "5.8.3",
+    "yaml": "2.8.1"
+  }
+}

@@ -1,0 +1,27 @@
+[
+  {
+    "type": "mock",
+    "title": "Mock agent (offline, deterministic)",
+    "models": []
+  },
+  {
+    "type": "scripted",
+    "title": "Scripted actions",
+    "models": []
+  },
+  {
+    "type": "openai",
+    "title": "OpenAI",
+    "models": [
+      "gpt-4o",
+      "gpt-4o-mini"
+    ]
+  },
+  {
+    "type": "anthropic",
+    "title": "Anthropic",
+    "models": [
+      "claude-sonnet-4-5"
+    ]
+  }
+]

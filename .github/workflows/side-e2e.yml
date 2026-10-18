@@ -1,0 +1,54 @@
+name: Side e2e
+
+on:
+  pull_request:
+    paths:
+      - "e2e/**"
+      - "contracts/openapi.yaml"
+      - ".github/workflows/side-e2e.yml"
+  push:
+    branches: [side/main]
+    paths:
+      - "e2e/**"
+      - "contracts/openapi.yaml"
+      - ".github/workflows/side-e2e.yml"
+  workflow_dispatch:
+
+jobs:
+  api-contract:
+    name: API contract tests (Prism mock)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: e2e
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # The api project only uses Playwright's request fixture, so no browser download is needed.
+      - name: Run api project against the contract mock
+        run: npx playwright test --project=api
+        env:
+          CI: "true"
+
+      - name: Upload HTML report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: side-e2e-api-report
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          retention-days: 14

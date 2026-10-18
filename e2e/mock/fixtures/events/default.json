@@ -1,0 +1,355 @@
+{
+  "description": "Mock agent run: 20 steps then succeeds. run_id/timestamp are filled in by the server.",
+  "events": [
+    {
+      "type": "status",
+      "status": "queued"
+    },
+    {
+      "type": "status",
+      "status": "running"
+    },
+    {
+      "type": "log",
+      "log": "env.reset() done"
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 0,
+        "action": "noop()",
+        "thought": "Mock agent step 0",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 120,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "chat",
+      "chat": {
+        "role": "info",
+        "message": "Episode started"
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 1,
+        "action": "scroll(0, 200)",
+        "thought": "Mock agent step 1",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 121,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 2,
+        "action": "noop()",
+        "thought": "Mock agent step 2",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 122,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 3,
+        "action": "scroll(0, 200)",
+        "thought": "Mock agent step 3",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 123,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 4,
+        "action": "noop()",
+        "thought": "Mock agent step 4",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 124,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 5,
+        "action": "scroll(0, 200)",
+        "thought": "Mock agent step 5",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 125,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 6,
+        "action": "noop()",
+        "thought": "Mock agent step 6",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 126,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 7,
+        "action": "scroll(0, 200)",
+        "thought": "Mock agent step 7",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 127,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 8,
+        "action": "noop()",
+        "thought": "Mock agent step 8",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 128,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 9,
+        "action": "scroll(0, 200)",
+        "thought": "Mock agent step 9",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 129,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 10,
+        "action": "noop()",
+        "thought": "Mock agent step 10",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 130,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 11,
+        "action": "scroll(0, 200)",
+        "thought": "Mock agent step 11",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 131,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 12,
+        "action": "noop()",
+        "thought": "Mock agent step 12",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 132,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 13,
+        "action": "scroll(0, 200)",
+        "thought": "Mock agent step 13",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 133,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 14,
+        "action": "noop()",
+        "thought": "Mock agent step 14",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 134,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 15,
+        "action": "scroll(0, 200)",
+        "thought": "Mock agent step 15",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 135,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 16,
+        "action": "noop()",
+        "thought": "Mock agent step 16",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 136,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 17,
+        "action": "scroll(0, 200)",
+        "thought": "Mock agent step 17",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 137,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 18,
+        "action": "noop()",
+        "thought": "Mock agent step 18",
+        "url": "https://example.com/",
+        "reward": 0.0,
+        "terminated": false,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 138,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "step",
+      "step": {
+        "index": 19,
+        "action": "send_msg_to_user(\"Done: task completed by the mock agent.\")",
+        "thought": "Mock agent step 19",
+        "url": "https://example.com/",
+        "reward": 1.0,
+        "terminated": true,
+        "truncated": false,
+        "last_action_error": null,
+        "screenshot_url": null,
+        "elapsed_ms": 139,
+        "timestamp": null
+      }
+    },
+    {
+      "type": "chat",
+      "chat": {
+        "role": "assistant",
+        "message": "Done: task completed by the mock agent."
+      }
+    },
+    {
+      "type": "status",
+      "status": "succeeded"
+    }
+  ]
+}

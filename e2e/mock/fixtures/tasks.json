@@ -1,0 +1,58 @@
+[
+  {
+    "id": "browsergym/openended",
+    "benchmark": "openended",
+    "title": "Open-ended task",
+    "description": "Free-form goal on any start URL.",
+    "requires_setup": false
+  },
+  {
+    "id": "browsergym/miniwob.click-test",
+    "benchmark": "miniwob",
+    "title": "Click test",
+    "description": "Click the button.",
+    "requires_setup": false
+  },
+  {
+    "id": "browsergym/miniwob.click-button",
+    "benchmark": "miniwob",
+    "title": "Click button",
+    "description": "Click the button with the given label.",
+    "requires_setup": false
+  },
+  {
+    "id": "browsergym/miniwob.click-checkboxes",
+    "benchmark": "miniwob",
+    "title": "Click checkboxes",
+    "description": "Select the requested checkboxes and submit.",
+    "requires_setup": false
+  },
+  {
+    "id": "browsergym/miniwob.enter-text",
+    "benchmark": "miniwob",
+    "title": "Enter text",
+    "description": "Type the given text into the field and submit.",
+    "requires_setup": false
+  },
+  {
+    "id": "browsergym/miniwob.login-user",
+    "benchmark": "miniwob",
+    "title": "Login user",
+    "description": "Log in with the given username and password.",
+    "requires_setup": false
+  },
+  {
+    "id": "browsergym/webarena.310",
+    "benchmark": "webarena",
+    "title": "WebArena #310",
+    "description": "Shopping admin task (needs WebArena servers).",
+    "requires_setup": true
+  },
+  {
+    "id": "browsergym/workarena.servicenow.order-standard-laptop",
+    "benchmark": "workarena",
+    "title": "Order a standard laptop",
+    "description": "ServiceNow catalog order (needs a ServiceNow instance).",
+    "requires_setup": true
+  }
+]

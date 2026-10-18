@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Side — e2e reference UI</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <header>
+    <strong>Side</strong> <span class="muted">e2e reference UI (not the product — implements the data-testid contract)</span>
+    <nav>
+      <a href="/runs" data-testid="nav-runs">Runs</a>
+      <a href="/tasks" data-testid="nav-tasks">Tasks</a>
+      <a href="/runs/new" data-testid="nav-new-run" class="primary">New run</a>
+    </nav>
+  </header>
+  <main id="app"></main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
