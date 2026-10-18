@@ -1,11 +1,14 @@
 import importlib.resources
 import json
+import logging
 
 import numpy as np
 
-from browsergym.experiments.benchmark import task_metadata
+from browsergym.experiments.benchmark.metadata.utils import task_metadata
 
-# for posterity
+logger = logging.getLogger(__name__)
+
+# for posterity: these helpers print the generated metadata CSV files to stdout
 
 
 def print_metadata_workarena():
@@ -128,31 +131,29 @@ def print_miniwob_train_test_splits():
         n_train = sum([group_counts[group] for group in train_groups])
         n_test = sum([group_counts[group] for group in test_groups])
 
-        print(f"train/test split: {n_train} <> {n_test}")
+        logger.info("train/test split: %d <> %d", n_train, n_test)
 
         # growing phase
         if free_groups:
             if n_train < n_test:
                 group = move_random_group(from_groups=free_groups, to_groups=train_groups)
-                print(f"adding {group} to train")
+                logger.info("adding %s to train", group)
             else:
                 group = move_random_group(from_groups=free_groups, to_groups=test_groups)
-                print(f"adding {group} to test")
+                logger.info("adding %s to test", group)
 
         # group switching phase
         elif n_train < n_test - slack:
             group = move_random_group(from_groups=test_groups, to_groups=train_groups)
-            print(f"switching {group} from test to train")
+            logger.info("switching %s from test to train", group)
         elif n_test < n_train - slack:
             group = move_random_group(from_groups=train_groups, to_groups=test_groups)
-            print(f"switching {group} from train to test")
+            logger.info("switching %s from train to test", group)
 
         # done (equilibrium)
         else:
-            print("equilibrium")
+            logger.info("equilibrium")
             done = True
-
-        print()
 
     metadata["browsergym_split"] = metadata["similarity_group"].apply(
         lambda group: "train" if group in train_groups else "test" if group in test_groups else ""

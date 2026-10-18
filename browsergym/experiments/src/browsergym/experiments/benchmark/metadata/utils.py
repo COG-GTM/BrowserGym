@@ -2,27 +2,31 @@ import io
 import pkgutil
 from collections import defaultdict
 from copy import deepcopy
-from typing import Any, Optional
+from pathlib import Path
+from typing import IO, Any
 
 import pandas as pd
 
 from browsergym.experiments.loop import EnvArgs
 
 
-def task_metadata(benchmark_name: str):
-    return task_metadata_from_csv(
-        io.StringIO(pkgutil.get_data(__name__, f"{benchmark_name}.csv").decode("utf-8"))
-    )
+def task_metadata(benchmark_name: str) -> pd.DataFrame:
+    data = pkgutil.get_data(__name__, f"{benchmark_name}.csv")
+    if data is None:
+        raise FileNotFoundError(f"No task metadata found for benchmark {benchmark_name!r}.")
+    return task_metadata_from_csv(io.StringIO(data.decode("utf-8")))
 
 
-def task_metadata_from_csv(filepath):
+def task_metadata_from_csv(filepath: str | Path | IO[str]) -> pd.DataFrame:
     return pd.read_csv(filepath).fillna("")
 
 
-def task_list_from_metadata(metadata: pd.DataFrame, filter: dict[str, str] = {}):
+def task_list_from_metadata(
+    metadata: pd.DataFrame, filter: dict[str, str] | None = None
+) -> list[str]:
     df = metadata
     # filter the desired columns (AND filter)
-    for col_name, regex in filter.items():
+    for col_name, regex in (filter or {}).items():
         col_filter = df[col_name].astype(str).str.contains(regex, regex=True)
         df = df[col_filter]
     # return only the task names
@@ -31,7 +35,7 @@ def task_list_from_metadata(metadata: pd.DataFrame, filter: dict[str, str] = {})
 
 def build_full_task_dependency_graph_from_metadata(
     task_metadata: pd.DataFrame,
-) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+) -> dict[str, list[str]]:
     if "depends_on" not in task_metadata.columns:
         raise ValueError(
             'task metadata column "depends_on" is required to compute task dependencies.'
@@ -45,7 +49,7 @@ def build_full_task_dependency_graph_from_metadata(
     return graph_parents
 
 
-def extract_graph_children(parents: dict[Any, list[Any]]):
+def extract_graph_children(parents: dict[Any, list[Any]]) -> dict[Any, list[Any]]:
     # start with empty children
     children = {task_name: [] for task_name in parents.keys()}
     # build children sets iteratively
@@ -58,16 +62,16 @@ def extract_graph_children(parents: dict[Any, list[Any]]):
 def extract_sparse_task_dependency_graph_from_subset(
     task_subset: list[str],
     parents: dict[str, list[str]],
-    children: Optional[dict[str, list[str]]] = None,
+    children: dict[str, list[str]] | None = None,
     return_children: bool = False,
-) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+) -> dict[str, list[str]] | tuple[dict[str, list[str]], dict[str, list[str]]]:
 
     if children is None:
         children = extract_graph_children(parents)
 
     # consistency check
-    assert all([task in parents for task in task_subset])
-    assert all([task in children for task in task_subset])
+    assert all(task in parents for task in task_subset)
+    assert all(task in children for task in task_subset)
 
     # copy the graph
     subgraph_parents = deepcopy(parents)
@@ -112,7 +116,7 @@ def build_env_args_dependency_graphs(
     task_runs = dict(task_runs)
 
     # consistency check
-    assert all([task in task_dependencies for task in task_runs.keys()])
+    assert all(task in task_dependencies for task in task_runs)
 
     # divide same-task runs into distinct splits if needed
     task_runs_splits = []
