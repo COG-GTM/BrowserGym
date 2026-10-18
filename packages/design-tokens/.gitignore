@@ -1,0 +1,4 @@
+node_modules/
+# Generated outputs are committed so apps/web and apps/mobile can consume them without a build step.
+!dist/
+!scripts/lib/

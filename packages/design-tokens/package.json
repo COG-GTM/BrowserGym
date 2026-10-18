@@ -1,0 +1,36 @@
+{
+  "name": "@side/design-tokens",
+  "version": "0.1.0",
+  "description": "Side brand & design system tokens (CSS variables, Tailwind preset, React Native theme, JSON) built with Style Dictionary.",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "files": ["dist", "preview", "tokens"],
+  "exports": {
+    "./css": "./dist/css/side.css",
+    "./tailwind": {
+      "types": "./dist/tailwind/preset.d.ts",
+      "import": "./dist/tailwind/preset.mjs",
+      "require": "./dist/tailwind/preset.cjs"
+    },
+    "./tailwind/theme.css": "./dist/tailwind/theme.css",
+    "./native": "./dist/react-native/theme.ts",
+    "./json": "./dist/json/tokens.json",
+    "./json/flat": "./dist/json/tokens.flat.json",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "contrast": "node scripts/contrast-report.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/ && npm run typecheck",
+    "check": "npm test"
+  },
+  "devDependencies": {
+    "style-dictionary": "4.4.0",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=18.17"
+  }
+}
