@@ -282,7 +282,8 @@ def massage_task_within_subprocess(
             )
     else:
         try:
-            outcome = outcome_queue.get(timeout=kill_timeout)
+            # the sub-process already exited, any outcome it put is already in the pipe (short grace period only)
+            outcome = outcome_queue.get(timeout=1)
         except queue.Empty:
             # the sub-process died before reporting an outcome (e.g., crash in gym.make() or env.close())
             outcome = (

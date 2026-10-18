@@ -391,10 +391,14 @@ def test_massage_subprocess_zombie_warning(monkeypatch, caplog):
 def test_massage_subprocess_died_without_outcome(monkeypatch, target):
     monkeypatch.setattr(utils, "run_massage", target)
 
-    outcome, err_msg = massage_task_within_subprocess("task.a", timeout=20, kill_timeout=1)
+    start = time.monotonic()
+    outcome, err_msg = massage_task_within_subprocess("task.a", timeout=20)
+    elapsed = time.monotonic() - start
 
     assert outcome == "exception"
     assert "without reporting an outcome" in err_msg
+    # no kill_timeout-long wait on the empty queue of an already exited sub-process
+    assert elapsed < 5
 
 
 def test_massage_subprocess_died_without_outcome_is_retried(monkeypatch, caplog):
