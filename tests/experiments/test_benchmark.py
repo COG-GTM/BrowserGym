@@ -2,6 +2,8 @@ import dataclasses
 import os
 import random
 import re
+import subprocess
+import sys
 import tempfile
 
 import numpy as np
@@ -92,6 +94,39 @@ def test_benchmark_subset():
     dict_2.pop("name")
 
     assert dict_1 == dict_2
+
+
+def _run_with_hashseed(code: str, hashseed: int) -> str:
+    env = dict(os.environ, PYTHONHASHSEED=str(hashseed))
+    return subprocess.run(
+        [sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True
+    ).stdout
+
+
+def test_benchmark_task_order_reproducible_across_processes():
+    code = """
+import json
+from browsergym.experiments.benchmark import Benchmark
+from browsergym.experiments.benchmark.configs import DEFAULT_BENCHMARKS
+
+benchmark = DEFAULT_BENCHMARKS["webarena"]()
+subset = benchmark.subset_from_task_ratio(ratio=0.5, seed=1)
+no_metadata = Benchmark(
+    name="no_metadata",
+    high_level_action_set_args=benchmark.high_level_action_set_args,
+    is_multi_tab=benchmark.is_multi_tab,
+    supports_parallel_seeds=benchmark.supports_parallel_seeds,
+    backends=benchmark.backends,
+    env_args_list=benchmark.env_args_list[:50],
+)
+print(json.dumps({
+    "subset": [env_args.task_name for env_args in subset.env_args_list],
+    "metadata": list(no_metadata.task_metadata["task_name"]),
+    "dependencies": list(no_metadata.dependency_graph_over_tasks()),
+}))
+"""
+    outputs = [_run_with_hashseed(code, hashseed) for hashseed in (0, 1, 2)]
+    assert outputs[0] == outputs[1] == outputs[2]
 
 
 def test_benchmark_subset_from_task_ratio():
