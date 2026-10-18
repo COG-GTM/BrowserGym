@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  .zone {
+    display: inline-block;
+    vertical-align: top;
+    width: 200px;
+    height: 200px;
+    margin: 20px;
+    border: 2px dashed #888;
+  }
+  .item {
+    width: 120px;
+    height: 40px;
+    margin: 10px;
+    background-color: #9cf;
+    text-align: center;
+    line-height: 40px;
+  }
+</style>
+</head>
+<body>
+
+<h2>HTML5 drag and drop</h2>
+
+<div id="source" class="zone">
+  <div id="item-1" class="item" draggable="true">Item 1</div>
+  <div id="item-2" class="item" draggable="true">Item 2</div>
+</div>
+<div id="target" class="zone"></div>
+
+<p>Last drop: <span id="drop-log"></span></p>
+
+<script>
+  document.querySelectorAll(".item").forEach((item) => {
+    item.addEventListener("dragstart", (event) => {
+      event.dataTransfer.setData("text/plain", item.id);
+    });
+  });
+  const target = document.getElementById("target");
+  target.addEventListener("dragover", (event) => {
+    event.preventDefault();
+  });
+  target.addEventListener("drop", (event) => {
+    event.preventDefault();
+    const id = event.dataTransfer.getData("text/plain");
+    target.appendChild(document.getElementById(id));
+    document.getElementById("drop-log").textContent = id;
+  });
+</script>
+
+</body>
+</html>

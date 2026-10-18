@@ -11,6 +11,7 @@ from pyparsing.exceptions import ParseException
 
 # register openended gym environments
 import browsergym.core
+from browsergym.core.action.functions import check, uncheck
 from browsergym.core.action.highlevel import HighLevelActionSet
 from browsergym.core.action.parsers import NamedArgument, highlevel_action_parser
 from browsergym.core.constants import BROWSERGYM_ID_ATTRIBUTE as BID_ATTR
@@ -36,6 +37,11 @@ CHECKBOX_URL = f"file://{__DATA_DIR}/input_type/checkbox_input.html"
 MULTI_IFRAME_URL = f"file://{__DATA_DIR}/basic_iframe_site/basic_iframe_2.html"
 OBSTRUCTED_CHECKBOX_URL = f"file://{__DATA_DIR}/obstructed_checkbox_page.html"
 LOTS_OF_IFRAMES_URL = f"file://{__DATA_DIR}/lots_of_iframes.html"
+SELECT_URL = f"file://{__DATA_DIR}/select.html"
+FILE_INPUT_URL = f"file://{__DATA_DIR}/input_type/file_input.html"
+DRAG_AND_DROP_URL = f"file://{__DATA_DIR}/drag_and_drop.html"
+AUTOCOMPLETE_URL = f"file://{__DATA_DIR}/autocomplete.html"
+SCROLLABLE_PANELS_URL = f"file://{__DATA_DIR}/scrollable_panels.html"
 
 
 def test_action_parser():
@@ -1355,6 +1361,354 @@ def test_iframe_bid():
         # checkbox should get checked
         checkbox = get_checkbox(obs, id)
         assert checkbox.has_attr("checked")
+
+    env.close()
+
+
+def _make_env(start_url, action_set):
+    return gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": start_url},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        timeout=__TIMEOUT,
+        action_mapping=action_set.to_python_code,
+    )
+
+
+def _get_soup(obs, with_center_coords=False):
+    return bs4.BeautifulSoup(
+        flatten_dom_to_str(
+            obs["dom_object"],
+            obs["extra_element_properties"],
+            with_center_coords=with_center_coords,
+        ),
+        "lxml",
+    )
+
+
+def _center(elem):
+    return ast.literal_eval(elem.get("center"))
+
+
+def test_select_option():
+    action_set = HighLevelActionSet(subsets=["bid"])
+    env = _make_env(SELECT_URL, action_set)
+
+    def get_elems(obs):
+        soup = _get_soup(obs)
+        return (
+            soup.find("select", attrs={"id": "color"}),
+            soup.find("span", attrs={"id": "color-result"}).get_text(strip=True),
+            soup.find("select", attrs={"id": "fruits"}),
+            soup.find("span", attrs={"id": "fruits-result"}).get_text(strip=True),
+        )
+
+    obs, info = env.reset()
+    color, color_result, fruits, fruits_result = get_elems(obs)
+    assert color.get("value") == "red"
+    assert color_result == ""
+    assert fruits_result == ""
+
+    # single option, by value
+    obs, reward, terminated, truncated, info = env.step(
+        f"select_option({repr(color.get(BID_ATTR))}, 'blue')"
+    )
+    color, color_result, fruits, fruits_result = get_elems(obs)
+    assert not obs["last_action_error"]
+    assert color.get("value") == "blue"
+    assert color_result == "blue"
+
+    # single option, by label
+    obs, reward, terminated, truncated, info = env.step(
+        f"select_option({repr(color.get(BID_ATTR))}, 'Green')"
+    )
+    color, color_result, fruits, fruits_result = get_elems(obs)
+    assert not obs["last_action_error"]
+    assert color.get("value") == "green"
+    assert color_result == "green"
+
+    # multiple options (mixing value and label) in a multi-select
+    obs, reward, terminated, truncated, info = env.step(
+        f"select_option({repr(fruits.get(BID_ATTR))}, ['banana', 'Date'])"
+    )
+    color, color_result, fruits, fruits_result = get_elems(obs)
+    assert not obs["last_action_error"]
+    assert fruits_result == "banana,date"
+    assert color_result == "green"
+
+    # unknown option is reported as an action error
+    obs, reward, terminated, truncated, info = env.step(
+        f"select_option({repr(color.get(BID_ATTR))}, 'purple')"
+    )
+    color, color_result, fruits, fruits_result = get_elems(obs)
+    assert obs["last_action_error"]
+    assert color.get("value") == "green"
+
+    env.close()
+
+
+def test_upload_file(tmp_path):
+    action_set = HighLevelActionSet(subsets=["bid", "coord"])
+    env = _make_env(FILE_INPUT_URL, action_set)
+
+    first_file = tmp_path / "upload_me.txt"
+    first_file.write_text("hello")
+    second_file = tmp_path / "upload_me_too.txt"
+    second_file.write_text("world")
+
+    def get_file_input(obs):
+        return _get_soup(obs, with_center_coords=True).find("input", attrs={"id": "myfile"})
+
+    obs, info = env.reset()
+    file_input = get_file_input(obs)
+    assert not file_input.get("value")
+
+    # upload using bid
+    obs, reward, terminated, truncated, info = env.step(
+        f"upload_file({repr(file_input.get(BID_ATTR))}, {repr(str(first_file))})"
+    )
+    file_input = get_file_input(obs)
+    assert not obs["last_action_error"]
+    assert file_input.get("value").endswith("upload_me.txt")
+
+    # an empty list clears the selected files
+    obs, reward, terminated, truncated, info = env.step(
+        f"upload_file({repr(file_input.get(BID_ATTR))}, [])"
+    )
+    file_input = get_file_input(obs)
+    assert not obs["last_action_error"]
+    assert not file_input.get("value")
+
+    # upload using coordinates
+    x, y = _center(file_input)
+    obs, reward, terminated, truncated, info = env.step(
+        f"mouse_upload_file({repr(x)}, {repr(y)}, [{repr(str(second_file))}])"
+    )
+    file_input = get_file_input(obs)
+    assert not obs["last_action_error"]
+    assert file_input.get("value").endswith("upload_me_too.txt")
+
+    # clicking something that does not open a file chooser is reported as an action error
+    heading_x, heading_y = _center(_get_soup(obs, with_center_coords=True).find("h1"))
+    obs, reward, terminated, truncated, info = env.step(
+        f"mouse_upload_file({repr(heading_x)}, {repr(heading_y)}, {repr(str(first_file))})"
+    )
+    file_input = get_file_input(obs)
+    assert obs["last_action_error"]
+    assert file_input.get("value").endswith("upload_me_too.txt")
+
+    env.close()
+
+
+def test_drag_and_drop():
+    action_set = HighLevelActionSet(subsets=["bid", "coord"])
+    env = _make_env(DRAG_AND_DROP_URL, action_set)
+
+    def get_state(obs):
+        soup = _get_soup(obs, with_center_coords=True)
+        source = soup.find("div", attrs={"id": "source"})
+        target = soup.find("div", attrs={"id": "target"})
+        item_1 = soup.find("div", attrs={"id": "item-1"})
+        item_2 = soup.find("div", attrs={"id": "item-2"})
+        drop_log = soup.find("span", attrs={"id": "drop-log"}).get_text(strip=True)
+        return source, target, item_1, item_2, drop_log
+
+    def child_ids(zone):
+        return [child.get("id") for child in zone.find_all("div")]
+
+    obs, info = env.reset()
+    source, target, item_1, item_2, drop_log = get_state(obs)
+    assert child_ids(source) == ["item-1", "item-2"]
+    assert child_ids(target) == []
+
+    # drag and drop using bids
+    obs, reward, terminated, truncated, info = env.step(
+        f"drag_and_drop({repr(item_1.get(BID_ATTR))}, {repr(target.get(BID_ATTR))})"
+    )
+    source, target, item_1, item_2, drop_log = get_state(obs)
+    assert not obs["last_action_error"]
+    assert drop_log == "item-1"
+    assert child_ids(source) == ["item-2"]
+    assert child_ids(target) == ["item-1"]
+
+    # drag and drop using coordinates
+    from_x, from_y = _center(item_2)
+    to_x, to_y = _center(target)
+    obs, reward, terminated, truncated, info = env.step(
+        f"mouse_drag_and_drop({repr(from_x)}, {repr(from_y)}, {repr(to_x)}, {repr(to_y)})"
+    )
+    source, target, item_1, item_2, drop_log = get_state(obs)
+    assert not obs["last_action_error"]
+    assert drop_log == "item-2"
+    assert child_ids(source) == []
+    assert child_ids(target) == ["item-1", "item-2"]
+
+    env.close()
+
+
+def test_fill_autocomplete_menu():
+    action_set = HighLevelActionSet(subsets=["bid"])
+    env = _make_env(AUTOCOMPLETE_URL, action_set)
+
+    def get_state(obs):
+        soup = _get_soup(obs)
+        city = soup.find("input", attrs={"id": "city"})
+        suggestions = [
+            option.get_text(strip=True)
+            for option in soup.find_all("div", attrs={"class": "suggestion"})
+        ]
+        keydowns = int(soup.find("span", attrs={"id": "keydown-count"}).get_text(strip=True))
+        return city, suggestions, keydowns
+
+    obs, info = env.reset()
+    city, suggestions, keydowns = get_state(obs)
+    bid = city.get(BID_ATTR)
+    assert keydowns == 0
+
+    # plain fill: no key events
+    obs, reward, terminated, truncated, info = env.step(f"fill({repr(bid)}, 'Lon')")
+    city, suggestions, prev_keydowns = get_state(obs)
+    assert not obs["last_action_error"]
+    assert city.get("value") == "Lon"
+    assert suggestions == ["London"]
+    assert prev_keydowns == 0
+
+    # autocomplete mode: fill n-1 chars then type the last one (exactly one character keydown)
+    obs, reward, terminated, truncated, info = env.step(f"fill({repr(bid)}, 'Par', True)")
+    city, suggestions, keydowns = get_state(obs)
+    assert not obs["last_action_error"]
+    assert city.get("value") == "Par"
+    assert suggestions == ["Paris", "Parma"]
+    assert keydowns == prev_keydowns + 1
+    prev_keydowns = keydowns
+
+    # autocomplete mode, single character: previous value is cleared, char is typed
+    obs, reward, terminated, truncated, info = env.step(
+        f"fill({repr(bid)}, 'L', enable_autocomplete_menu=True)"
+    )
+    city, suggestions, keydowns = get_state(obs)
+    assert not obs["last_action_error"]
+    assert city.get("value") == "L"
+    assert suggestions == ["Lisbon", "London", "Lyon"]
+    assert keydowns == prev_keydowns + 1
+    prev_keydowns = keydowns
+
+    # autocomplete mode, empty value: field is cleared, nothing is typed
+    obs, reward, terminated, truncated, info = env.step(f"fill({repr(bid)}, '', True)")
+    city, suggestions, keydowns = get_state(obs)
+    assert not obs["last_action_error"]
+    assert city.get("value") == ""
+    assert suggestions == []
+    assert keydowns == prev_keydowns
+
+    env.close()
+
+
+def test_scroll_at():
+    action_set = HighLevelActionSet(subsets=["bid", "coord"])
+    env = _make_env(SCROLLABLE_PANELS_URL, action_set)
+
+    def get_state(obs):
+        soup = _get_soup(obs, with_center_coords=True)
+        left = soup.find("div", attrs={"id": "left"})
+        right = soup.find("div", attrs={"id": "right"})
+        left_scroll = int(soup.find("span", attrs={"id": "left-scroll"}).get_text(strip=True))
+        right_scroll = int(soup.find("span", attrs={"id": "right-scroll"}).get_text(strip=True))
+        return left, right, left_scroll, right_scroll
+
+    obs, info = env.reset()
+    left, right, left_scroll, right_scroll = get_state(obs)
+    assert left_scroll == 0 and right_scroll == 0
+
+    # scroll down over the left panel: only the left panel scrolls
+    x, y = _center(left)
+    obs, reward, terminated, truncated, info = env.step(f"scroll_at({repr(x)}, {repr(y)}, 0, 300)")
+    left, right, left_scroll, right_scroll = get_state(obs)
+    assert not obs["last_action_error"]
+    assert left_scroll > 0
+    assert right_scroll == 0
+    prev_left_scroll = left_scroll
+
+    # scroll down over the right panel: only the right panel scrolls
+    x, y = _center(right)
+    obs, reward, terminated, truncated, info = env.step(f"scroll_at({repr(x)}, {repr(y)}, 0, 300)")
+    left, right, left_scroll, right_scroll = get_state(obs)
+    assert not obs["last_action_error"]
+    assert left_scroll == prev_left_scroll
+    assert right_scroll > 0
+    prev_right_scroll = right_scroll
+
+    # scroll back up over the left panel
+    x, y = _center(left)
+    obs, reward, terminated, truncated, info = env.step(
+        f"scroll_at({repr(x)}, {repr(y)}, 0, -1000)"
+    )
+    left, right, left_scroll, right_scroll = get_state(obs)
+    assert not obs["last_action_error"]
+    assert left_scroll == 0
+    assert right_scroll == prev_right_scroll
+
+    env.close()
+
+
+def test_tab_close_last_tab():
+    action_set = HighLevelActionSet(subsets=["tab", "nav"])
+    env = _make_env(CHECKBOX_URL, action_set)
+
+    obs, info = env.reset()
+    assert len(obs["open_pages_urls"]) == 1
+    assert obs["url"] == CHECKBOX_URL
+
+    # closing the only tab opens a fresh blank page and makes it active
+    obs, reward, terminated, truncated, info = env.step("tab_close()")
+    assert not obs["last_action_error"]
+    assert obs["open_pages_urls"] == ("about:blank",)
+    assert len(obs["open_pages_titles"]) == 1
+    assert obs["active_page_index"] == 0
+    assert obs["url"] == "about:blank"
+
+    # the new page is usable
+    obs, reward, terminated, truncated, info = env.step(f"goto({repr(TEXTBOX_URL)})")
+    assert not obs["last_action_error"]
+    assert obs["open_pages_urls"] == (TEXTBOX_URL,)
+    assert obs["active_page_index"] == 0
+    assert obs["url"] == TEXTBOX_URL
+
+    env.close()
+
+
+# test that forced check/uncheck can toggle an obstructed checkbox
+@pytest.mark.parametrize("retry_with_force", [True, False])
+@pytest.mark.parametrize(
+    "action_name, checkbox_id, expected_checked",
+    [("check", "hobbies-checkbox-2", True), ("uncheck", "hobbies-checkbox-1", False)],
+)
+def test_forced_check_actions(retry_with_force, action_name, checkbox_id, expected_checked):
+    action_set = HighLevelActionSet(
+        subsets=["custom"],
+        custom_actions=[check, uncheck],
+        retry_with_force=retry_with_force,
+    )
+    env = _make_env(OBSTRUCTED_CHECKBOX_URL, action_set)
+
+    def get_checkbox(obs):
+        return _get_soup(obs).find("input", attrs={"id": checkbox_id})
+
+    obs, info = env.reset()
+    checkbox = get_checkbox(obs)
+    assert checkbox.has_attr("checked") != expected_checked
+
+    obs, reward, terminated, truncated, info = env.step(
+        f"{action_name}({repr(checkbox.get(BID_ATTR))})"
+    )
+    checkbox = get_checkbox(obs)
+    if retry_with_force:
+        assert not obs["last_action_error"]
+        assert checkbox.has_attr("checked") == expected_checked
+    else:
+        assert obs["last_action_error"]
+        assert checkbox.has_attr("checked") != expected_checked
 
     env.close()
 

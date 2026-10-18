@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  .panel {
+    display: inline-block;
+    vertical-align: top;
+    width: 200px;
+    height: 200px;
+    margin: 20px;
+    overflow-y: scroll;
+    border: 1px solid #888;
+  }
+  .content {
+    height: 2000px;
+  }
+</style>
+</head>
+<body>
+
+<h2>Scrollable panels</h2>
+
+<div id="left" class="panel"><div class="content">Left panel</div></div>
+<div id="right" class="panel"><div class="content">Right panel</div></div>
+
+<p>Left scrollTop: <span id="left-scroll">0</span></p>
+<p>Right scrollTop: <span id="right-scroll">0</span></p>
+
+<script>
+  ["left", "right"].forEach((id) => {
+    const panel = document.getElementById(id);
+    panel.addEventListener("scroll", () => {
+      document.getElementById(id + "-scroll").textContent = String(Math.round(panel.scrollTop));
+    });
+  });
+</script>
+
+</body>
+</html>
