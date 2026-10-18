@@ -674,7 +674,7 @@ class ExpResult:
             step = int(file.name.split("_")[-1].split(".")[0])
             self.get_step_info(step)
 
-        return [self._steps_info[i] for i in range(len(self._steps_info))]
+        return [self._steps_info[i] for i in sorted(self._steps_info)]
 
     @property
     def summary_info(self) -> dict:
@@ -697,8 +697,9 @@ class ExpResult:
         """
         steps = []
         for step_info in self.steps_info:
-            if "tape_segment" in step_info.agent_info["extra_info"]:
-                tape_segment = step_info.agent_info["extra_info"]["tape_segment"]
+            extra_info = (step_info.agent_info or {}).get("extra_info") or {}
+            if "tape_segment" in extra_info:
+                tape_segment = extra_info["tape_segment"]
             else:
                 tape_segment = self._create_tape_segment(step_info)
             steps += tape_segment
@@ -733,13 +734,15 @@ class ExpResult:
             )
 
         # extract thought step
-        think = step_info.agent_info.get("think", "")
+        think = (step_info.agent_info or {}).get("think", "")
         if think:
             tape_segment.append(
                 dict(kind="browsergym_thought", metadata={"step": step_info.step}, text=think)
             )
 
-        # extract action steps
+        # extract action steps (the final step of an episode has no action)
+        if not step_info.action:
+            return tape_segment
         function_calls = highlevel_action_parser.parse_string(step_info.action, parse_all=True)
         for name, arguments in function_calls:
             tape_segment.append(
@@ -764,8 +767,19 @@ class ExpResult:
     def save_tape(self, filename: str = "tape.json"):
         if os.path.exists(self.exp_dir / filename):
             raise FileExistsError(f"{filename} already exists in {self.exp_dir}")
-        with open(self.exp_dir / filename, "w") as f:
-            json.dump(self.tape, f, indent=4, ensure_ascii=False)
+        tape_json = json.dumps(self.tape, indent=4, ensure_ascii=False, cls=DataclassJSONEncoder)
+        # write to a temp file and link it into place, so a failed write never leaves a
+        # partial tape behind and an existing tape is never overwritten
+        dest = self.exp_dir / filename
+        tmp_path = dest.parent / f".{dest.name}.{uuid.uuid4().hex}.tmp"
+        # os.open with 0o666 keeps the umask-derived permissions a plain open() would give
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(tape_json)
+            os.link(tmp_path, dest)
+        finally:
+            os.unlink(tmp_path)
 
     def get_screenshot(self, step: int, som=False) -> Image:
         key = (step, som)
@@ -916,6 +930,10 @@ class DataclassJSONEncoder(json.JSONEncoder):
             return float(obj)
         if isinstance(obj, np.ndarray):
             return obj.tolist()
+        if isinstance(obj, Path):
+            return str(obj)
+        if isinstance(obj, datetime):
+            return obj.isoformat()
         return super().default(obj)
 
 
