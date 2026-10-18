@@ -26,6 +26,7 @@ class ServerConfig:
     viewport_width: int = 1280
     viewport_height: int = 720
     screenshots: bool = True
+    allow_upload_file: bool = False
     max_axtree_chars: Optional[int] = None
     transport: Transport = "stdio"
     host: str = "127.0.0.1"
@@ -55,6 +56,7 @@ class ServerConfig:
             viewport_width=args.viewport_width,
             viewport_height=args.viewport_height,
             screenshots=args.screenshots,
+            allow_upload_file=args.allow_upload_file,
             max_axtree_chars=args.max_axtree_chars,
             transport=args.transport,
             host=args.host,
@@ -108,6 +110,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Attach a PNG screenshot to every tool result",
+    )
+    parser.add_argument(
+        "--allow-upload-file",
+        dest="allow_upload_file",
+        action="store_true",
+        help="Expose the upload_file tool (lets MCP clients upload files from the server host)",
     )
     parser.add_argument(
         "--max-axtree-chars",

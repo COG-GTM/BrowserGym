@@ -24,7 +24,14 @@ from browsergym.core.action.highlevel import HighLevelActionSet
 
 from .config import ServerConfig
 from .models import BrowserObservation
-from .session import BrowserSession, SessionScope, run_in_browser_thread, shutdown_browser_worker
+from .session import (
+    BrowserSession,
+    SessionScope,
+    acquire_browser_worker,
+    release_browser_worker,
+    run_in_browser_thread,
+    shutdown_browser_worker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,13 +131,18 @@ def _make_action_tool(action_name: str, signature: inspect.Signature):
     return tool
 
 
-def action_tools(subsets: Sequence[str]) -> list[tuple[str, Callable, str]]:
+def action_tools(
+    subsets: Sequence[str], allow_upload_file: bool = False
+) -> list[tuple[str, Callable, str]]:
     """(name, tool fn, description) for every action of the configured BrowserGym action set."""
     import browsergym.core.action.functions as functions
 
     action_set = HighLevelActionSet(subsets=list(subsets))
     tools = []
     for name, action in action_set.action_set.items():
+        if name == "upload_file" and not allow_upload_file:
+            # reads arbitrary files from the server host: opt-in only
+            continue
         fn = getattr(functions, name)
         description = inspect.cleandoc(fn.__doc__ or action.description)
         tools.append((name, _make_action_tool(name, inspect.signature(fn)), description))
@@ -143,12 +155,16 @@ def create_server(config: Optional[ServerConfig] = None) -> FastMCP:
     @asynccontextmanager
     async def lifespan(_: FastMCP) -> AsyncIterator[SessionScope]:
         scope = SessionScope(config)
+        acquire_browser_worker()
         try:
             yield scope
         finally:
             # shielded: this also runs while the transport is being cancelled (Ctrl-C, client gone)
             with anyio.CancelScope(shield=True):
-                await scope.close_all()
+                try:
+                    await scope.close_all()
+                finally:
+                    await anyio.to_thread.run_sync(release_browser_worker)
 
     mcp = FastMCP(
         "BrowserGym",
@@ -160,7 +176,7 @@ def create_server(config: Optional[ServerConfig] = None) -> FastMCP:
         log_level=config.log_level,
     )
 
-    for name, fn, description in action_tools(config.subsets):
+    for name, fn, description in action_tools(config.subsets, config.allow_upload_file):
         mcp.add_tool(
             fn,
             name=name,
@@ -212,6 +228,16 @@ def create_server(config: Optional[ServerConfig] = None) -> FastMCP:
 def main(argv: Optional[Sequence[str]] = None) -> None:
     config = ServerConfig.from_args(argv)
     logging.basicConfig(level=config.log_level)
+    if config.transport == "streamable-http" and config.host not in (
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    ):
+        logger.warning(
+            "Streamable HTTP is bound to %s without authentication: any client that can reach it "
+            "controls the browser. Only expose it on trusted networks.",
+            config.host,
+        )
     server = create_server(config)
     try:
         server.run(transport=config.transport)

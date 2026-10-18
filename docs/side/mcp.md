@@ -41,6 +41,7 @@ Useful flags (`python -m browsergym.utils.mcp --help` for all):
 | `--subset` | `chat,infeas,bid,nav,tab` | Action subsets to expose as tools (repeatable or comma-separated; e.g. `coord`, `webarena`). |
 | `--headless/--no-headless` | headless | Show the browser window. |
 | `--screenshots/--no-screenshots` | on | Attach a PNG screenshot to every tool result. |
+| `--allow-upload-file` | off | Expose `upload_file` (reads files from the server host; keep off for remote clients). |
 | `--max-axtree-chars` | unlimited | Truncate the AXTree text in results. |
 | `--demo-mode` | `off` | BrowserGym demo mode (visual cursor/highlights). |
 | `-r/--record-video-dir` | none | Record a Playwright video per session. |
@@ -55,7 +56,7 @@ typed JSON schemas derived from the action function signatures. With the default
 | Tool | BrowserGym action |
 | --- | --- |
 | `goto(url)`, `go_back()`, `go_forward()` | navigation (`nav`) |
-| `click(bid, button?, modifiers?)`, `dblclick`, `hover(bid)`, `fill(bid, value)`, `select_option(bid, options)`, `press(bid, key_comb)`, `focus`, `clear`, `drag_and_drop`, `upload_file`, `scroll(delta_x, delta_y)` | element actions (`bid`) |
+| `click(bid, button?, modifiers?)`, `dblclick`, `hover(bid)`, `fill(bid, value)`, `select_option(bid, options)`, `press(bid, key_comb)`, `focus`, `clear`, `drag_and_drop`, `scroll(delta_x, delta_y)`, `upload_file` (only with `--allow-upload-file`) | element actions (`bid`) |
 | `new_tab()`, `tab_focus(index)`, `tab_close()` | tabs (`tab`) |
 | `send_msg_to_user(text)` | chat (`chat`) |
 | `report_infeasible(reason)` | infeasible (`infeas`) |
@@ -91,8 +92,9 @@ Every action tool, `reset` and `get_observation` return:
   `Mcp-Session-Id` over Streamable HTTP) gets its own `BrowserEnv`, created lazily on the first
   tool call. Sessions never share pages.
 * **Graceful shutdown.** `close_browser` closes the session's env; when the server stops
-  (stdin closed, SIGINT/SIGTERM) the FastMCP lifespan closes every remaining env and stops the
-  shared Playwright instance. Playwright's sync API is driven from a single dedicated worker
+  (stdin closed, SIGINT/SIGTERM) the FastMCP lifespan closes every remaining env and, once the
+  last server run ends, stops the shared Playwright instance (also when served via `mcp run`).
+  A failed `reset` discards the half-started env, so the next call starts cleanly. Playwright's sync API is driven from a single dedicated worker
   thread, so the asyncio event loop is never blocked by the browser.
 
 ## Client configuration
@@ -170,8 +172,8 @@ static fixture `tests/mcp/data/form.html` served with `python -m http.server 876
 `mcp.client.streamable_http.streamable_http_client` + `ClientSession` (mcp 1.30.0).
 
 ```text
->>> initialize -> server=BrowserGym protocol=2025-11-25 session=a9ec95a59d62421c9b4d42990ea059e5
->>> tools/list -> 23 tools: noop, send_msg_to_user, report_infeasible, scroll, fill, select_option, click, dblclick, hover, press, focus, clear, drag_and_drop, upload_file, go_back, go_forward, goto, tab_close, tab_focus, new_tab, get_observation, reset, close_browser
+>>> initialize -> server=BrowserGym protocol=2025-11-25 session=9a7e4113a1a142c78569a215babc3a91
+>>> tools/list -> 22 tools: noop, send_msg_to_user, report_infeasible, scroll, fill, select_option, click, dblclick, hover, press, focus, clear, drag_and_drop, go_back, go_forward, goto, tab_close, tab_focus, new_tab, get_observation, reset, close_browser
 
 >>> tools/call reset {"start_url": "http://127.0.0.1:8765/form.html", "goal": "Order a large for Alice"}
     isError=False content=['text', 'image']
@@ -234,7 +236,7 @@ static fixture `tests/mcp/data/form.html` served with `python -m http.server 876
 >>> tools/call get_observation {}
     isError=False content=['text', 'image']
     structured: {"action": null, "url": "http://127.0.0.1:8765/form.html", "title": "MCP Test Form", "last_action_error": "", "step": 10}
-    chat: {"role": "assistant", "message": "Order placed for Alice (Large).", "timestamp": 1792291470.4769247}
+    chat: {"role": "assistant", "message": "Order placed for Alice (Large).", "timestamp": 1792291722.5307686}
 
 >>> tools/call close_browser {}
     isError=False content=['text']

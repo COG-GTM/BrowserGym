@@ -16,6 +16,7 @@ from mcp.shared.memory import create_connected_server_and_client_session
 
 from browsergym.utils.mcp import ServerConfig, create_server
 from browsergym.utils.mcp.server import format_action
+from browsergym.utils.mcp.session import BrowserSession, browser_worker
 
 from .conftest import free_port
 
@@ -163,6 +164,49 @@ async def test_sessions_are_isolated(static_site):
         _, obs_b = await call(b, "get_observation")
     assert obs_a["title"] == "MCP Test Form"
     assert obs_b["title"] == "Second Page"
+
+
+async def test_upload_file_is_opt_in():
+    async with client() as session:
+        names = {t.name for t in (await session.list_tools()).tools}
+        assert "upload_file" not in names
+    async with client(allow_upload_file=True) as session:
+        names = {t.name for t in (await session.list_tools()).tools}
+        assert "upload_file" in names
+
+
+async def test_failed_reset_recovers(static_site):
+    async with client(start_url=f"{static_site}/second.html", timeout_ms=5000) as session:
+        bad = await session.call_tool("reset", {"start_url": f"http://127.0.0.1:{free_port()}/"})
+        assert bad.isError
+        # the broken env is discarded, so the next call starts the configured task again
+        _, obs = await call(session, "get_observation")
+        assert obs["title"] == "Second Page"
+
+
+def test_observe_after_active_tab_closed(static_site):
+    session = BrowserSession(ServerConfig(start_url=f"{static_site}/form.html"))
+
+    def scenario():
+        session.reset_sync()
+        session.step_sync("new_tab()")
+        session.step_sync(f"goto('{static_site}/second.html')")
+        session.browser_env.page.close()  # e.g. the page called window.close()
+        return session.observe_sync()
+
+    try:
+        obs = browser_worker().submit(scenario).result(timeout=60)
+        assert obs.title == "MCP Test Form"
+    finally:
+        browser_worker().submit(session.dispose_sync).result(timeout=60)
+
+
+def test_disposed_session_does_not_relaunch(static_site):
+    session = BrowserSession(ServerConfig(start_url=f"{static_site}/form.html"))
+    browser_worker().submit(session.dispose_sync).result(timeout=60)
+    with pytest.raises(RuntimeError, match="was closed"):
+        browser_worker().submit(session.step_sync, "noop()").result(timeout=60)
+    assert session.env is None
 
 
 def _wait_for_port(port: int, proc: subprocess.Popen, timeout: float = 60):

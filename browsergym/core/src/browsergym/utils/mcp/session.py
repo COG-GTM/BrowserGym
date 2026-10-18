@@ -29,6 +29,7 @@ T = TypeVar("T")
 
 _worker: Optional[ThreadPoolExecutor] = None
 _worker_lock = threading.Lock()
+_worker_users = 0
 
 
 def browser_worker() -> ThreadPoolExecutor:
@@ -42,6 +43,22 @@ def browser_worker() -> ThreadPoolExecutor:
 async def run_in_browser_thread(fn: Callable[..., T], *args, **kwargs) -> T:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(browser_worker(), functools.partial(fn, *args, **kwargs))
+
+
+def acquire_browser_worker() -> None:
+    global _worker_users
+    with _worker_lock:
+        _worker_users += 1
+
+
+def release_browser_worker() -> None:
+    """Shut the worker down once the last server run using it has finished."""
+    global _worker_users
+    with _worker_lock:
+        _worker_users = max(0, _worker_users - 1)
+        last = _worker_users == 0
+    if last:
+        shutdown_browser_worker()
 
 
 def shutdown_browser_worker() -> None:
@@ -77,6 +94,7 @@ class BrowserSession:
     def __init__(self, config: ServerConfig):
         self.config = config
         self.env: Optional[gym.Env] = None
+        self.disposed = False
         self.task_id = config.task_id
         self.step_count = 0
         self.last_reward = 0.0
@@ -105,6 +123,7 @@ class BrowserSession:
         goal: Optional[str] = None,
         seed: Optional[int] = None,
     ) -> BrowserObservation:
+        self._check_not_disposed()
         self.close_sync()
         self.task_id = task_id or self.config.task_id
         task_kwargs: dict[str, Any] = {}
@@ -116,21 +135,36 @@ class BrowserSession:
             raise ValueError("start_url / goal can only be set for the browsergym/openended task")
 
         logger.info("Starting BrowserGym env %s", self.task_id)
-        self.env = gym.make(
-            self.task_id,
-            headless=self.config.headless,
-            timeout=self.config.timeout_ms,
-            viewport={"width": self.config.viewport_width, "height": self.config.viewport_height},
-            record_video_dir=self.config.record_video_dir,
-            action_mapping=self.action_set.to_python_code,
-            task_kwargs=task_kwargs,
-        )
-        obs, _ = self.browser_env.reset(seed=seed)
-        self.step_count = 0
-        self.last_reward, self.last_terminated, self.last_truncated = 0.0, False, False
-        return self._to_observation(obs, action=None)
+        try:
+            self.env = gym.make(
+                self.task_id,
+                headless=self.config.headless,
+                timeout=self.config.timeout_ms,
+                viewport={
+                    "width": self.config.viewport_width,
+                    "height": self.config.viewport_height,
+                },
+                record_video_dir=self.config.record_video_dir,
+                action_mapping=self.action_set.to_python_code,
+                task_kwargs=task_kwargs,
+            )
+            obs, _ = self.browser_env.reset(seed=seed)
+            self.step_count = 0
+            self.last_reward, self.last_terminated, self.last_truncated = 0.0, False, False
+            return self._to_observation(obs, action=None)
+        except BaseException:
+            # never keep a half-initialized env around: the next call starts from scratch
+            self.close_sync()
+            raise
+
+    def _check_not_disposed(self) -> None:
+        if self.disposed:
+            raise RuntimeError(
+                "This browser session was closed; call the tool again to start a new one"
+            )
 
     def ensure_started_sync(self) -> None:
+        self._check_not_disposed()
         if not self.started:
             self.reset_sync()
 
@@ -146,6 +180,7 @@ class BrowserSession:
     def observe_sync(self) -> BrowserObservation:
         self.ensure_started_sync()
         env = self.browser_env
+        env._active_page_check()
         env._wait_dom_loaded()
         return self._to_observation(env._get_obs(), action=None)
 
@@ -158,6 +193,11 @@ class BrowserSession:
             logger.info("Closed BrowserGym env %s", self.task_id)
         except Exception:
             logger.exception("Error while closing BrowserGym env")
+
+    def dispose_sync(self) -> None:
+        """Close for good: work still queued for this session must not relaunch a browser."""
+        self.disposed = True
+        self.close_sync()
 
     def _to_observation(self, obs: dict, action: Optional[str]) -> BrowserObservation:
         self.last_obs = obs
@@ -227,11 +267,11 @@ class SessionScope:
             session = self._sessions.pop(key, None)
         if session is None:
             return False
-        await run_in_browser_thread(session.close_sync)
+        await run_in_browser_thread(session.dispose_sync)
         return True
 
     async def close_all(self) -> None:
         async with self._lock:
             sessions, self._sessions = list(self._sessions.values()), {}
         for session in sessions:
-            await run_in_browser_thread(session.close_sync)
+            await run_in_browser_thread(session.dispose_sync)
