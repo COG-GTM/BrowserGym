@@ -29,6 +29,11 @@ classifiers = [
 ]
 dynamic = ["dependencies", "version"]
 
+[project.optional-dependencies]
+mcp = [
+    "mcp[cli]>=1.25,<2",
+]
+
 [project.urls]
 homepage = "https://github.com/ServiceNow/BrowserGym"
 

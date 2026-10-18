@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head><title>MCP Test Form</title></head>
+<body>
+  <h1>Order form</h1>
+  <label for="name">Name</label>
+  <input id="name" type="text" aria-label="Name">
+  <label for="size">Size</label>
+  <select id="size" aria-label="Size">
+    <option value="s">Small</option>
+    <option value="m">Medium</option>
+    <option value="l">Large</option>
+  </select>
+  <button id="submit" onclick="document.getElementById('result').textContent = 'Ordered ' + document.getElementById('size').value + ' for ' + document.getElementById('name').value">Submit</button>
+  <button id="hover-target" onmouseover="document.getElementById('hovered').textContent = 'Hovered!'">Hover me</button>
+  <p id="result">Nothing ordered</p>
+  <p id="hovered">Not hovered</p>
+  <input id="keys" type="text" aria-label="Keys" onkeydown="if (event.key === 'Enter') document.getElementById('entered').textContent = 'Enter pressed'">
+  <p id="entered">No enter</p>
+  <a href="second.html">Go to second page</a>
+  <div style="height: 3000px"></div>
+  <p>Bottom of page</p>
+</body>
+</html>
