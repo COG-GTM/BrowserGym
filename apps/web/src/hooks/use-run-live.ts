@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useReducer } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import {
   getApi,
   isTerminal,
@@ -126,18 +126,22 @@ function reducer(state: RunLiveState, action: Action): RunLiveState {
  */
 export function useRunLive(runId: string) {
   const [state, dispatch] = useReducer(reducer, initial);
+  // Results from a previous run id (client-side navigation mid-fetch) must not land in this run's state.
+  const currentRunId = useRef(runId);
+  const isCurrent = useCallback(() => currentRunId.current === runId, [runId]);
 
   const reload = useCallback(async () => {
     const api = getApi();
     const [run, steps, chat] = await Promise.all([api.getRun(runId), api.listSteps(runId), api.listChat(runId)]);
-    dispatch({ type: "loaded", run, steps, chat });
+    if (isCurrent()) dispatch({ type: "loaded", run, steps, chat });
     return run;
-  }, [runId]);
+  }, [runId, isCurrent]);
 
   useEffect(() => {
     const api = getApi();
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
+    currentRunId.current = runId;
     dispatch({ type: "reset" });
 
     // Subscribe first (buffering events) so nothing emitted during the initial fetch is lost.
@@ -175,15 +179,15 @@ export function useRunLive(runId: string) {
 
   const cancel = useCallback(async () => {
     const run = await getApi().cancelRun(runId);
-    dispatch({ type: "run", run });
-  }, [runId]);
+    if (isCurrent()) dispatch({ type: "run", run });
+  }, [runId, isCurrent]);
 
   const sendChat = useCallback(
     async (message: string) => {
       const msg = await getApi().sendChat(runId, message);
-      dispatch({ type: "chat", message: msg });
+      if (isCurrent()) dispatch({ type: "chat", message: msg });
     },
-    [runId],
+    [runId, isCurrent],
   );
 
   return { ...state, cancel, sendChat, reload };

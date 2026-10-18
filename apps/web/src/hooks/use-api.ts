@@ -25,7 +25,6 @@ export function useRuns(params?: ListRunsParams, config?: SWRConfiguration) {
 export function useStepDetail(runId: string, index: number | null) {
   return useSWR(index === null ? null : ["step", runId, index], () => getApi().getStep(runId, index!), {
     revalidateOnFocus: false,
-    keepPreviousData: true,
   });
 }
 

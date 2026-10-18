@@ -120,13 +120,13 @@ function RunsView() {
           {data ? ` · ${data.items.length} runs` : ""}
         </p>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setCursors((c) => c.slice(0, -1))}>
+          <Button variant="outline" size="sm" disabled={page === 1 || isLoading} onClick={() => setCursors((c) => c.slice(0, -1))}>
             <ChevronLeft /> Previous
           </Button>
           <Button
             variant="outline"
             size="sm"
-            disabled={!data?.next_cursor}
+            disabled={!data?.next_cursor || isLoading}
             onClick={() => data?.next_cursor && setCursors((c) => [...c, data.next_cursor!])}
           >
             Next <ChevronRight />

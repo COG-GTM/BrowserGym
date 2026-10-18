@@ -50,6 +50,11 @@ describe("mock fixtures conform to contracts/openapi.yaml", () => {
     expect(await ids(a)).toEqual(await ids(b));
   });
 
+  it("lists runs newest first", async () => {
+    const items = (await api.listRuns({ limit: 200 })).items.map((r) => Date.parse(r.created_at));
+    expect(items).toEqual([...items].sort((a, b) => b - a));
+  });
+
   it("filters and paginates runs with cursors", async () => {
     const first = await api.listRuns({ limit: 10 });
     expect(first.items).toHaveLength(10);

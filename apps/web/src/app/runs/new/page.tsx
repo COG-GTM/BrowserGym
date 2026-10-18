@@ -79,6 +79,29 @@ function NewRunForm() {
   const selectedAgent = agents.data?.find((a) => a.type === agentType);
   const isOpenended = taskId === OPENENDED_TASK_ID;
 
+  // "Run again" links here with ?from=<run id>: prefill the form from that run's configuration.
+  const fromRunId = params.get("from");
+  useEffect(() => {
+    if (!fromRunId) return;
+    let stale = false;
+    getApi()
+      .getRun(fromRunId)
+      .then((run) => {
+        if (stale) return;
+        setTaskId(run.task_id);
+        setAgentType(run.agent.type);
+        setModel(run.agent.model ?? null);
+        setUseAxtree(run.agent.use_axtree ?? true);
+        setUseScreenshot(run.agent.use_screenshot ?? false);
+        if (run.task_id === OPENENDED_TASK_ID) setGoal(run.goal ?? "");
+        if (run.max_steps) setMaxSteps(run.max_steps);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [fromRunId]);
+
   useEffect(() => {
     const models = selectedAgent?.models ?? [];
     setModel((m) => (m && models.includes(m) ? m : (models[0] ?? null)));

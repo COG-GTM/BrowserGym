@@ -575,5 +575,5 @@ export function seedHistory(now: number, count = 42): SeedRun[] {
     if (status === "cancelled") chat.push({ role: "info", message: "Run cancelled by user.", timestamp: base.finished_at });
     out.push({ run: base, steps, chat });
   }
-  return out;
+  return out.sort((a, b) => Date.parse(b.run.created_at) - Date.parse(a.run.created_at));
 }

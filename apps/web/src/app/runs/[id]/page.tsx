@@ -190,7 +190,7 @@ export default function RunDetailPage() {
     }
   }
 
-  const rerunHref = `/runs/new?task=${encodeURIComponent(run.task_id)}`;
+  const rerunHref = `/runs/new?from=${encodeURIComponent(run.id)}`;
 
   return (
     <div className="space-y-5">
