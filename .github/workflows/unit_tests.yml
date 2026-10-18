@@ -120,6 +120,12 @@ jobs:
       - name: Run browsergym-core Unit Tests
         run: pytest -n 5 --durations=10 -m 'not pricy' -v tests/core
 
+      - name: Pre-download tokenizer ressources (for VisualWebArena)
+        run: python -c "import nltk; nltk.download('punkt_tab')"
+
+      - name: Run browsergym-visualwebarena offline Unit Tests (no VWA server needed)
+        run: pytest --durations=10 -v tests/visualwebarena/test_vwa_validate.py
+
   browsergym-miniwob:
     runs-on: ubuntu-22.04
 
