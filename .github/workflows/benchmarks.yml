@@ -1,0 +1,79 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Benchmark profile (full or quick)"
+        type: choice
+        options: [full, quick]
+        default: full
+      fail_on_regression:
+        description: "Fail the job if any benchmark regresses beyond the threshold"
+        type: boolean
+        default: false
+      threshold:
+        description: "Relative change that counts as a regression"
+        type: string
+        default: "0.25"
+  pull_request:
+    types: [labeled, synchronize, opened, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmarks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmarks:
+    # manual runs, or PRs carrying the "benchmark" label
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'benchmark')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    defaults:
+      run:
+        shell: bash -l {0}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Pip install
+        run: pip install -e ./browsergym/core -e ./browsergym/experiments tqdm pytest
+
+      - name: Install Playwright
+        run: playwright install chromium --with-deps
+
+      - name: Harness tests
+        run: pytest benchmarks/tests -q
+
+      - name: Run benchmarks
+        run: python -m benchmarks run --profile "${{ inputs.profile || 'full' }}" --json benchmark-results/results.json
+
+      - name: Compare with baseline
+        run: |
+          args=""
+          if [ "${{ inputs.fail_on_regression }}" = "true" ]; then args="--fail-on-regression"; fi
+          python -m benchmarks compare benchmarks/baselines/baseline.json benchmark-results/results.json \
+            --threshold "${{ inputs.threshold || '0.25' }}" \
+            --markdown benchmark-results/comparison.md $args
+          status=$?
+          cat benchmark-results/comparison.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.run_id }}
+          path: benchmark-results/
+          if-no-files-found: warn
