@@ -56,16 +56,21 @@ def release_browser_worker() -> None:
     global _worker_users
     with _worker_lock:
         _worker_users = max(0, _worker_users - 1)
-        last = _worker_users == 0
-    if last:
-        shutdown_browser_worker()
+        if _worker_users == 0:
+            _shutdown_worker_locked()
 
 
 def shutdown_browser_worker() -> None:
     """Stop the global Playwright driver (if we started it) and the worker thread."""
-    global _worker
     with _worker_lock:
-        worker, _worker = _worker, None
+        _shutdown_worker_locked()
+
+
+def _shutdown_worker_locked() -> None:
+    # Runs with _worker_lock held, so no new worker can be created (and pick up the old
+    # thread-bound Playwright global) until the old driver has fully stopped.
+    global _worker
+    worker, _worker = _worker, None
     if worker is None:
         return
 

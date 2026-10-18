@@ -170,9 +170,13 @@ async def test_upload_file_is_opt_in():
     async with client() as session:
         names = {t.name for t in (await session.list_tools()).tools}
         assert "upload_file" not in names
-    async with client(allow_upload_file=True) as session:
+    async with client(subsets=["bid", "coord"]) as session:
         names = {t.name for t in (await session.list_tools()).tools}
-        assert "upload_file" in names
+        assert "mouse_click" in names
+        assert not names & {"upload_file", "mouse_upload_file"}
+    async with client(subsets=["bid", "coord"], allow_upload_file=True) as session:
+        names = {t.name for t in (await session.list_tools()).tools}
+        assert {"upload_file", "mouse_upload_file"} <= names
 
 
 async def test_failed_reset_recovers(static_site):

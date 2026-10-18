@@ -41,7 +41,7 @@ Useful flags (`python -m browsergym.utils.mcp --help` for all):
 | `--subset` | `chat,infeas,bid,nav,tab` | Action subsets to expose as tools (repeatable or comma-separated; e.g. `coord`, `webarena`). |
 | `--headless/--no-headless` | headless | Show the browser window. |
 | `--screenshots/--no-screenshots` | on | Attach a PNG screenshot to every tool result. |
-| `--allow-upload-file` | off | Expose `upload_file` (reads files from the server host; keep off for remote clients). |
+| `--allow-upload-file` | off | Expose `upload_file` / `mouse_upload_file` (reads files from the server host; keep off for remote clients). |
 | `--max-axtree-chars` | unlimited | Truncate the AXTree text in results. |
 | `--demo-mode` | `off` | BrowserGym demo mode (visual cursor/highlights). |
 | `-r/--record-video-dir` | none | Record a Playwright video per session. |

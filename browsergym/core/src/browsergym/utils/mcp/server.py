@@ -131,6 +131,10 @@ def _make_action_tool(action_name: str, signature: inspect.Signature):
     return tool
 
 
+# actions that read arbitrary files from the server host
+UPLOAD_ACTIONS = frozenset({"upload_file", "mouse_upload_file"})
+
+
 def action_tools(
     subsets: Sequence[str], allow_upload_file: bool = False
 ) -> list[tuple[str, Callable, str]]:
@@ -140,7 +144,7 @@ def action_tools(
     action_set = HighLevelActionSet(subsets=list(subsets))
     tools = []
     for name, action in action_set.action_set.items():
-        if name == "upload_file" and not allow_upload_file:
+        if name in UPLOAD_ACTIONS and not allow_upload_file:
             # reads arbitrary files from the server host: opt-in only
             continue
         fn = getattr(functions, name)
