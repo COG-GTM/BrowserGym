@@ -4,11 +4,13 @@ from time import time
 
 import bs4
 import gymnasium as gym
+import playwright.sync_api
 import pytest
 
 # register openended gym environments
 import browsergym.core
 import browsergym.core.action
+import browsergym.core.env
 from browsergym.core.action.highlevel import HighLevelActionSet
 from browsergym.core.action.python import PythonActionSet
 from browsergym.core.constants import BROWSERGYM_ID_ATTRIBUTE as BID_ATTR
@@ -309,5 +311,147 @@ def test_resizeable_window(resizeable_window, size):
     assert not obs["last_action_error"]
 
     assert (obs["screenshot"].shape[1], obs["screenshot"].shape[0]) == size
+
+    env.close()
+
+
+class _FakePage:
+    def __init__(self, title="", closed=False, title_error=None):
+        self._title = title
+        self._closed = closed
+        self._title_error = title_error
+
+    def is_closed(self):
+        return self._closed
+
+    def close(self):
+        self._closed = True
+
+    def title(self):
+        if self._title_error:
+            raise playwright.sync_api.Error(self._title_error)
+        return self._title
+
+
+class _FakeContext:
+    def __init__(self, pages):
+        self._pages = pages
+
+    @property
+    def pages(self):
+        return [page for page in self._pages if not page.is_closed()]
+
+    def new_page(self):
+        page = _FakePage()
+        self._pages.append(page)
+        return page
+
+
+def _make_unwrapped_env(pages):
+    env = browsergym.core.env.BrowserEnv(task_entrypoint=None)
+    env.context = _FakeContext(pages)
+    return env
+
+
+def test_active_page_check_history_exhausted_falls_back_to_open_page():
+    closed_page = _FakePage(closed=True)
+    unactivated_page = _FakePage()  # never fired browsergym_page_activated
+    env = _make_unwrapped_env([closed_page, unactivated_page])
+    env.page = closed_page
+    env.page_history = {closed_page: None}
+
+    env._active_page_check()
+
+    assert env.page is unactivated_page
+    assert env.page_history == {}
+
+
+def test_active_page_check_crashed_page_falls_back_to_history():
+    previous_page = _FakePage()
+    crashed_page = _FakePage()
+    env = _make_unwrapped_env([previous_page, crashed_page])
+    env.page = crashed_page
+    env.page_history = {previous_page: None, crashed_page: None}
+    env.crashed_pages = {crashed_page}
+
+    env._active_page_check()
+
+    assert crashed_page.is_closed()
+    assert env.page is previous_page
+    assert list(env.page_history) == [previous_page]
+    assert env.crashed_pages == set()
+
+
+def test_active_page_check_only_crashed_page_opens_new_page():
+    crashed_page = _FakePage()
+    env = _make_unwrapped_env([crashed_page])
+    env.page = crashed_page
+    env.page_history = {crashed_page: None}
+    env.crashed_pages = {crashed_page}
+
+    env._active_page_check()
+
+    assert env.page is not crashed_page
+    assert env.context.pages == [env.page]
+
+
+def test_open_pages_titles_tolerates_failing_pages():
+    env = _make_unwrapped_env(
+        [
+            _FakePage(title="active"),
+            _FakePage(title_error="Target crashed"),
+            _FakePage(title_error="Execution context was destroyed"),
+        ]
+    )
+
+    assert env._get_open_pages_titles() == ("active", "", "")
+
+
+def test_crashed_active_page_recovery():
+    action_set = PythonActionSet()
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": TEST_PAGE},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        timeout=__TIMEOUT,
+        action_mapping=action_set.to_python_code,
+    )
+    obs, info = env.reset()
+
+    obs, reward, term, trunc, info = env.step("page.context.new_page()")
+
+    assert len(obs["open_pages_urls"]) == 2
+    assert obs["active_page_index"] == 1
+
+    # crash the renderer of the active page
+    obs, reward, term, trunc, info = env.step(
+        """\
+try:
+    page.goto("chrome://crash")
+except Exception:
+    pass
+"""
+    )
+
+    # the crashed page is closed, the previously active page becomes active again
+    assert len(obs["open_pages_urls"]) == 1
+    assert obs["active_page_index"] == 0
+    assert obs["url"] == TEST_PAGE
+    assert obs["axtree_object"]
+
+    # the only remaining page crashes, a fresh page is opened
+    obs, reward, term, trunc, info = env.step(
+        """\
+try:
+    page.goto("chrome://crash")
+except Exception:
+    pass
+"""
+    )
+
+    assert len(obs["open_pages_urls"]) == 1
+    assert obs["active_page_index"] == 0
+    assert obs["url"] == "about:blank"
 
     env.close()

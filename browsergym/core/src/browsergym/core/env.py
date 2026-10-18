@@ -132,6 +132,7 @@ class BrowserEnv(gym.Env, ABC):
         self.context: playwright.sync_api.BrowserContext = None
         self.page: playwright.sync_api.Page = None
         self.page_history: dict = {}
+        self.crashed_pages: set = set()
 
         # chat
         self.chat: Chat = None
@@ -295,6 +296,10 @@ class BrowserEnv(gym.Env, ABC):
 
         # set default timeout
         self.context.set_default_timeout(timeout)
+
+        # keep track of crashed pages, which are neither closed nor removed from the context
+        self.crashed_pages = set()
+        self.context.on("page", self._register_page_handlers)
 
         # hack: keep track of the active page with a javascript callback
         # there is no concept of active page in playwright
@@ -589,19 +594,65 @@ document.addEventListener("visibilitychange", () => {
 
         self.page = page
 
-    def _active_page_check(self):
-        # make sure there is always a page open
-        # if all pages have been closed, create a new page
-        if len(self.context.pages) == 0:
-            logger.warning("All pages are closed, opening a new page.")
-            self.page = self.context.new_page()
+    def _register_page_handlers(self, page: playwright.sync_api.Page):
+        page.on("crash", self._on_page_crash)
+        page.on("close", self._on_page_close)
 
-        # if the active page got closed, get the last active page from the history
-        while self.page_history and (self.page.is_closed() or self.page not in self.context.pages):
-            self.page_history.pop(self.page)  # remove active page from history
-            self.page = list(self.page_history.keys())[
-                -1
-            ]  # set last active page as the active page (most recent)
+    def _on_page_crash(self, page: playwright.sync_api.Page):
+        logger.warning(f"Page crashed ({page}).")
+        self.crashed_pages.add(page)
+
+    def _on_page_close(self, page: playwright.sync_api.Page):
+        self.crashed_pages.discard(page)
+        self.page_history.pop(page, None)
+
+    def _is_page_usable(self, page: playwright.sync_api.Page) -> bool:
+        return (
+            page is not None
+            and page not in self.crashed_pages
+            and not page.is_closed()
+            and page in self.context.pages
+        )
+
+    def _close_crashed_pages(self):
+        for page in list(self.crashed_pages):
+            if not page.is_closed():
+                logger.warning(f"Closing crashed page ({page}).")
+                try:
+                    page.close()
+                except playwright.sync_api.Error as e:
+                    logger.warning(f"Could not close crashed page ({page}): {repr(e)}")
+            if page.is_closed():
+                self.crashed_pages.discard(page)
+                self.page_history.pop(page, None)
+
+    def _active_page_check(self):
+        # crashed pages are neither closed nor removed from the context, close them
+        self._close_crashed_pages()
+
+        # forget pages that are no longer usable (closed, crashed, or outside the context)
+        for page in list(self.page_history.keys()):
+            if not self._is_page_usable(page):
+                self.page_history.pop(page)
+
+        if not self._is_page_usable(self.page):
+            if self.page_history:
+                # fall back to the last active page from the history (most recent)
+                self.page = list(self.page_history.keys())[-1]
+            else:
+                usable_pages = [page for page in self.context.pages if self._is_page_usable(page)]
+                if usable_pages:
+                    # fall back to the most recently opened page
+                    logger.warning("Active page is gone, falling back to the last open page.")
+                    self.page = usable_pages[-1]
+                else:
+                    # make sure there is always a page open
+                    logger.warning("All pages are closed or crashed, opening a new page.")
+                    self.page = self.context.new_page()
+
+        # active page should not have crashed
+        if self.page in self.crashed_pages:
+            raise RuntimeError(f"Unexpected: active page has crashed ({self.page}).")
 
         # active page should share the same browser context with the environment
         if self.page not in self.context.pages:
@@ -613,6 +664,17 @@ document.addEventListener("visibilitychange", () => {
         if self.page.is_closed():
             raise RuntimeError(f"Unexpected: active page has been closed ({self.page}).")
 
+    def _get_open_pages_titles(self) -> tuple[str, ...]:
+        titles = []
+        for page in self.context.pages:
+            try:
+                titles.append(page.title())
+            except playwright.sync_api.Error as e:
+                # background pages can be navigating, crashed or closing
+                logger.warning(f"Could not get the title of page {page}: {repr(e)}")
+                titles.append("")
+        return tuple(titles)
+
     def _get_obs(self):
         if self.use_raw_page_output:
             obs = {
@@ -623,7 +685,7 @@ document.addEventListener("visibilitychange", () => {
                     copy.deepcopy(self.goal_object)
                 ),  # new goal format, list of messages openai style
                 "open_pages_urls": tuple(page.url for page in self.context.pages),
-                "open_pages_titles": tuple(page.title() for page in self.context.pages),
+                "open_pages_titles": self._get_open_pages_titles(),
                 "active_page_index": np.asarray([self.context.pages.index(self.page)]),
                 "url": self.page.url,  # redundant with "open_pages_urls" and "active_page_index"
                 "last_action": self.last_action,
@@ -643,6 +705,20 @@ document.addEventListener("visibilitychange", () => {
                 extra_properties = extract_dom_extra_properties(dom, scale_factor=scale_factor)
             except (playwright.sync_api.Error, MarkingError) as e:
                 err_msg = str(e)
+                # the active page crashed or got closed, recover another page and retry
+                if retries_left > 0 and (
+                    "Target crashed" in err_msg
+                    or "Target page, context or browser has been closed" in err_msg
+                    or "Target closed" in err_msg
+                    or not self._is_page_usable(self.page)
+                ):
+                    logger.warning(
+                        f"The active page crashed or was closed while extracting the observation. Recovering ({retries_left}/{EXTRACT_OBS_MAX_TRIES} tries left).\n{repr(e)}"
+                    )
+                    if "Target crashed" in err_msg:
+                        self.crashed_pages.add(self.page)
+                    self._active_page_check()
+                    continue
                 # try to add robustness to async events (detached / deleted frames)
                 if retries_left > 0 and (
                     "Frame was detached" in err_msg
@@ -674,7 +750,7 @@ document.addEventListener("visibilitychange", () => {
                 copy.deepcopy(self.goal_object)
             ),  # new goal format, list of messages openai style
             "open_pages_urls": tuple(page.url for page in self.context.pages),
-            "open_pages_titles": tuple(page.title() for page in self.context.pages),
+            "open_pages_titles": self._get_open_pages_titles(),
             "active_page_index": np.asarray([self.context.pages.index(self.page)]),
             "url": self.page.url,  # redundant with "open_pages_urls" and "active_page_index"
             "screenshot": extract_screenshot(self.page),
