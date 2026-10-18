@@ -102,8 +102,9 @@ frame.get_by_test_id("ba3").click()
 
         # extract markdown-style code snippets if detected
         pattern = re.compile(r"```(?:python)?\n(?P<code>[\s\S]*?)```")
-        if pattern.match(action):
-            python_code += "\n".join([match.group("code") for match in pattern.finditer(action)])
+        matches = list(pattern.finditer(action))
+        if matches:
+            python_code += "\n".join([match.group("code") for match in matches])
         # otherwise just use the code action as is
         else:
             python_code += action
