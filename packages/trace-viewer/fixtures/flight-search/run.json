@@ -1,0 +1,19 @@
+{
+  "id": "run_flight_search",
+  "task_id": "browsergym/openended",
+  "goal": "Find the cheapest direct Business flight from Paris to Lisbon on Nov 3 and hold it.",
+  "agent": {
+    "type": "scripted",
+    "model": null,
+    "use_screenshot": true,
+    "use_axtree": true
+  },
+  "status": "succeeded",
+  "reward": 1.0,
+  "n_steps": 9,
+  "max_steps": 15,
+  "created_at": "2026-10-18T02:39:58Z",
+  "started_at": "2026-10-18T02:40:00Z",
+  "finished_at": "2026-10-18T02:40:30.756000Z",
+  "error": null
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "role": "user",
+    "message": "Find the cheapest direct Business flight from Paris to Lisbon on Nov 3 and hold it.",
+    "timestamp": "2026-10-18T02:40:00Z"
+  },
+  {
+    "role": "assistant",
+    "message": "Hi! I am your assistant, how can I help?",
+    "timestamp": "2026-10-18T02:40:00Z"
+  },
+  {
+    "role": "info",
+    "message": "Run started: browsergym/openended · scripted agent",
+    "timestamp": "2026-10-18T02:40:00Z"
+  },
+  {
+    "role": "assistant",
+    "message": "Held SH 218 (12:45 → 14:40, Business, direct) for €389. The hold expires in 15 minutes.",
+    "timestamp": "2026-10-18T02:40:30.756000Z"
+  }
+]
