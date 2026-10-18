@@ -2,6 +2,7 @@ import logging
 import multiprocessing as mp
 import os
 import traceback
+from queue import Empty
 import typing
 from typing import Literal
 
@@ -230,27 +231,37 @@ def massage_tasks(task_ids: list[str], max_retries: int = 1, timeout: int = 60):
 
 
 def run_massage(outcome_queue: mp.Queue, task_id: str):
-    import gymnasium as gym
+    outcome = "exception", None
+    env = None
+    try:
+        import gymnasium as gym
 
-    gym_id = f"browsergym/{task_id}"
-    env = gym.make(gym_id)
-    no_action = "noop()"
-    # check if action space exists and is compatible with "noop()"
-    try:
-        env.unwrapped.action_mapping(no_action)
-    except:
-        no_action = ""  # fallback plan
-    # run massage
-    try:
+        gym_id = f"browsergym/{task_id}"
+        env = gym.make(gym_id)
+        no_action = "noop()"
+        # check if action space exists and is compatible with "noop()"
+        try:
+            env.unwrapped.action_mapping(no_action)
+        except Exception:
+            no_action = ""  # fallback plan
+        # run massage
         env.reset()  # task setup
         env.step(no_action)  # task validation
         env.step(no_action)  # task validation again
         outcome = "success", None
     except Exception as e:
-        outcome = "exception", traceback.format_exception(e)
+        outcome = "exception", "".join(traceback.format_exception(e))
     finally:
-        env.close()
-        outcome_queue.put(outcome)
+        try:
+            if env is not None:
+                env.close()
+        except Exception as e:
+            if outcome[0] == "success":
+                outcome = "exception", "".join(traceback.format_exception(e))
+            else:
+                logger.warning(f"Error while closing environment after failed massage: {e!r}")
+        finally:
+            outcome_queue.put(outcome)
 
 
 def massage_task_within_subprocess(
@@ -280,6 +291,12 @@ def massage_task_within_subprocess(
                 f"Massage sub-process still alive {kill_timeout} seconds after kill(), you might have a zombie process now."
             )
     else:
-        outcome = queue.get_nowait()
+        try:
+            outcome = queue.get(timeout=kill_timeout)
+        except Empty:
+            outcome = (
+                "exception",
+                f"Massage sub-process exited with code {process.exitcode} without reporting an outcome",
+            )
 
     return outcome
