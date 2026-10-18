@@ -1,3 +1,5 @@
+import pathlib
+import re
 from typing import Tuple
 
 import playwright
@@ -67,6 +69,141 @@ def test_mock_image_goal_task():
     assert terminated is True
 
     env.close()
+
+
+LOCAL_START_URL = f"file://{pathlib.Path(__file__).resolve().parent}/data/example.html"
+IMAGE_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+LEGACY_GOAL_WARNING = 'WARNING: This goal cannot be converted to a text-only goal format. Use the new goal format instead ("goal_object" field). Any agent reading this should abort immediately.'
+CHAT_GREETING = {
+    "role": "assistant",
+    "message": "Hi! I am your UI assistant, I can perform web tasks for you. What can I help you with?",
+}
+
+
+class MockGoalTask(AbstractBrowserTask):
+    """Mock task whose setup() returns an arbitrary goal, to exercise BrowserEnv's goal handling."""
+
+    @classmethod
+    def get_task_id(cls):
+        return "mockgoal"
+
+    def __init__(self, seed: int = 0, goal=None) -> None:
+        super().__init__(seed)
+        self.goal = goal
+
+    def setup(self, page: playwright.sync_api.Page) -> tuple[str, dict]:
+        page.goto(LOCAL_START_URL, timeout=10000)
+        return self.goal, {}
+
+    def teardown(self) -> None:
+        pass
+
+    def validate(
+        self, page: playwright.sync_api.Page, chat_messages: list[str]
+    ) -> Tuple[float, bool, str, dict]:
+        return 0, False, "", {}
+
+
+def _chat(obs):
+    return [{"role": m["role"], "message": m["message"]} for m in obs["chat_messages"]]
+
+
+@pytest.mark.parametrize(
+    "goal,expected_goal_object,expected_legacy_goal,expected_chat",
+    [
+        (None, [], "", [CHAT_GREETING]),
+        (
+            "Open the example page.",
+            [{"type": "text", "text": "Open the example page."}],
+            "Open the example page.",
+            [CHAT_GREETING, {"role": "user", "message": "Open the example page."}],
+        ),
+        (
+            [
+                {"type": "text", "text": "Find this item."},
+                {"type": "text", "text": "Then report its price."},
+            ],
+            [
+                {"type": "text", "text": "Find this item."},
+                {"type": "text", "text": "Then report its price."},
+            ],
+            "Find this item.\nThen report its price.",
+            [
+                CHAT_GREETING,
+                {"role": "user", "message": "Find this item."},
+                {"role": "user", "message": "Then report its price."},
+            ],
+        ),
+        # VisualWebArena-style goal, with images given as {"url": ...} dicts
+        (
+            [
+                {"type": "text", "text": "Find this item."},
+                {"type": "image_url", "image_url": {"url": IMAGE_DATA_URL}},
+                {"type": "text", "text": "Then report its price."},
+            ],
+            [
+                {"type": "text", "text": "Find this item."},
+                {"type": "image_url", "image_url": {"url": IMAGE_DATA_URL}},
+                {"type": "text", "text": "Then report its price."},
+            ],
+            "Find this item.\n" + LEGACY_GOAL_WARNING,
+            [
+                CHAT_GREETING,
+                {"role": "user", "message": "Find this item."},
+                {"role": "user_image", "message": IMAGE_DATA_URL},
+                {"role": "user", "message": "Then report its price."},
+            ],
+        ),
+        # image given as a plain string
+        (
+            [{"type": "image_url", "image_url": IMAGE_DATA_URL}],
+            [{"type": "image_url", "image_url": IMAGE_DATA_URL}],
+            LEGACY_GOAL_WARNING,
+            [CHAT_GREETING, {"role": "user_image", "message": IMAGE_DATA_URL}],
+        ),
+    ],
+    ids=["none", "str", "text_list", "image_url_dict", "image_url_str"],
+)
+def test_goal_dispatch(goal, expected_goal_object, expected_legacy_goal, expected_chat):
+    env = BrowserEnv(MockGoalTask, task_kwargs={"goal": goal}, headless=True)
+    try:
+        obs, _ = env.reset()
+
+        assert list(obs["goal_object"]) == expected_goal_object
+        assert obs["goal"] == expected_legacy_goal
+        assert _chat(obs) == expected_chat
+
+        obs, _, _, _, info = env.step("noop()")
+        assert list(obs["goal_object"]) == expected_goal_object
+        assert obs["goal"] == expected_legacy_goal
+        assert not obs["last_action_error"]
+        assert info["action_exec_timeout"] == 0
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize(
+    "goal,error_match",
+    [
+        (42, "task_goal should be of type str or list, got <class 'int'>"),
+        (
+            {"type": "text", "text": "hi"},
+            "task_goal should be of type str or list, got <class 'dict'>",
+        ),
+        (
+            [{"type": "text", "text": "hi"}, {"type": "audio", "audio": "x.wav"}],
+            "Unknown message type 'audio' in the task goal.",
+        ),
+    ],
+    ids=["int", "dict", "unknown_message_type"],
+)
+def test_goal_dispatch_invalid(goal, error_match):
+    env = BrowserEnv(MockGoalTask, task_kwargs={"goal": goal}, headless=True)
+    try:
+        with pytest.raises(ValueError, match=re.escape(error_match)):
+            env.reset()
+    finally:
+        env.close()
 
 
 if __name__ == "__main__":

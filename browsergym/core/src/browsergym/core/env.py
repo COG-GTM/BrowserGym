@@ -49,6 +49,17 @@ def _try_to_extract_legacy_goal(goal: list):
     return legacy_goal
 
 
+_ACTION_TIMEOUT_RE = re.compile(r"TimeoutError: (?:[\w.]+: )?Timeout ([0-9]+)ms exceeded\.")
+
+
+def _extract_action_exec_timeout(action_error: str) -> float:
+    """Return the Playwright timeout (in seconds) reported by an action error, or 0 if none."""
+    match = _ACTION_TIMEOUT_RE.match(action_error)
+    if match:
+        return float(match.group(1)) / 1000  # ms to sec
+    return 0
+
+
 class BrowserEnv(gym.Env, ABC):
     """The main BrowserGym class, which encapsulates instruction-following Web browsing into a Gymnasium environment."""
 
@@ -459,9 +470,7 @@ document.addEventListener("visibilitychange", () => {
             self.last_action_error = ""
         except Exception as e:
             self.last_action_error = f"{type(e).__name__}: {e}"
-            match = re.match("TimeoutError: Timeout ([0-9]+)ms exceeded.", self.last_action_error)
-            if match:
-                info["action_exec_timeout"] = float(match.groups()[0]) / 1000  # ms to sec
+            info["action_exec_timeout"] = _extract_action_exec_timeout(self.last_action_error)
         return self.post_step(info)
 
     def post_step(
