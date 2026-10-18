@@ -1,6 +1,7 @@
 import logging
 import multiprocessing as mp
 import os
+import time
 import traceback
 import typing
 from typing import Literal
@@ -229,28 +230,39 @@ def massage_tasks(task_ids: list[str], max_retries: int = 1, timeout: int = 60):
                 )
 
 
-def run_massage(outcome_queue: mp.Queue, task_id: str):
-    import gymnasium as gym
+def run_massage(outcome_conn, task_id: str):
+    outcome = "exception", None
+    env = None
+    try:
+        import gymnasium as gym
 
-    gym_id = f"browsergym/{task_id}"
-    env = gym.make(gym_id)
-    no_action = "noop()"
-    # check if action space exists and is compatible with "noop()"
-    try:
-        env.unwrapped.action_mapping(no_action)
-    except:
-        no_action = ""  # fallback plan
-    # run massage
-    try:
+        gym_id = f"browsergym/{task_id}"
+        env = gym.make(gym_id)
+        no_action = "noop()"
+        # check if action space exists and is compatible with "noop()"
+        try:
+            env.unwrapped.action_mapping(no_action)
+        except Exception:
+            no_action = ""  # fallback plan
+        # run massage
         env.reset()  # task setup
         env.step(no_action)  # task validation
         env.step(no_action)  # task validation again
         outcome = "success", None
     except Exception as e:
-        outcome = "exception", traceback.format_exception(e)
+        outcome = "exception", "".join(traceback.format_exception(e))
     finally:
-        env.close()
-        outcome_queue.put(outcome)
+        try:
+            if env is not None:
+                env.close()
+        except Exception as e:
+            if outcome[0] == "success":
+                outcome = "exception", "".join(traceback.format_exception(e))
+            else:
+                logger.warning(f"Error while closing environment after failed massage: {e!r}")
+        finally:
+            outcome_conn.send(outcome)
+            outcome_conn.close()
 
 
 def massage_task_within_subprocess(
@@ -264,22 +276,59 @@ def massage_task_within_subprocess(
       - err_msg: error message if any, or None.
     """
 
-    queue = mp.Queue()
-    process = mp.Process(target=run_massage, args=(queue, task_id))
+    # one-way pipe whose only writer lives in the child: if the child dies (even mid-send) the
+    # reader gets EOF instead of blocking, and the child's send only completes as the parent reads
+    reader, writer = mp.Pipe(duplex=False)
+    process = mp.Process(target=run_massage, args=(writer, task_id))
     process.start()
-    process.join(timeout=timeout)
+    writer.close()
 
-    if process.is_alive():
+    def try_recv(poll_timeout: float):
+        try:
+            if reader.poll(poll_timeout):
+                return reader.recv(), True
+        except (EOFError, OSError):
+            return None, True  # writer closed without (complete) outcome
+        return None, False
+
+    outcome = None
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        outcome, done = try_recv(min(remaining, 1.0))
+        if done:
+            break
+        if not process.is_alive():
+            outcome, _ = try_recv(1.0)
+            break
+
+    if outcome is None and not process.is_alive():
+        # the child may have finished right at the deadline
+        outcome, _ = try_recv(0)
+        if outcome is None:
+            process.join(timeout=kill_timeout)
+            outcome = (
+                "exception",
+                f"Massage sub-process exited with code {process.exitcode} without reporting an outcome",
+            )
+
+    if outcome is None:
         # if the process is still alive after the timeout
         outcome = "timeout", f"Timeout {timeout} seconds exceeded"
         process.kill()
+    else:
         process.join(timeout=kill_timeout)
         if process.is_alive():
-            # if the process is still alive after the kill
-            logger.warning(
-                f"Massage sub-process still alive {kill_timeout} seconds after kill(), you might have a zombie process now."
-            )
-    else:
-        outcome = queue.get_nowait()
+            process.kill()
 
+    process.join(timeout=kill_timeout)
+    if process.is_alive():
+        # if the process is still alive after the kill
+        logger.warning(
+            f"Massage sub-process still alive {kill_timeout} seconds after kill(), you might have a zombie process now."
+        )
+
+    reader.close()
     return outcome
