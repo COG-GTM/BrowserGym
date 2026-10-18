@@ -1,10 +1,23 @@
+import functools
+
 import tiktoken
+
+
+@functools.lru_cache(maxsize=None)
+def _get_encoding(model):
+    return tiktoken.encoding_for_model(model)
 
 
 def count_tokens(text, model="gpt-4"):
     """Count the number of tokens in a text."""
 
-    return len(tiktoken.encoding_for_model(model).encode(text))
+    return len(_get_encoding(model).encode_ordinary(text))
+
+
+def count_tokens_batch(texts, model="gpt-4"):
+    """Count the number of tokens in each text, tokenizing them in parallel."""
+
+    return [len(tokens) for tokens in _get_encoding(model).encode_ordinary_batch(list(texts))]
 
 
 def count_messages_token(messages, model="gpt-4"):
