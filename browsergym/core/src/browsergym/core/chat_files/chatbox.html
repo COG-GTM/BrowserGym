@@ -547,21 +547,30 @@
         // Inline markdown on already-escaped text: [text](https://url), **bold**, *italic*.
         // Links are swapped for placeholders before emphasis, so emphasis can span a link while
         // the destination is taken verbatim from the escaped input and never formatted.
-        const LINK_SLOT = /\uE000(\d+)\uE001/g;
+        // Any placeholder delimiters already in the text are stashed the same way, so they survive.
+        const SLOT_OPEN = "\uE000";
+        const SLOT_CLOSE = "\uE001";
+        const SLOT_SOURCE = new RegExp(`${LINK_TOKEN.source}|[${SLOT_OPEN}${SLOT_CLOSE}]`, "g");
+        const LINK_SLOT = new RegExp(`${SLOT_OPEN}(\\d+)${SLOT_CLOSE}`, "g");
         function renderInline(escaped) {
-            const links = [];
-            const withSlots = escaped.replace(/[\uE000\uE001]/g, "").replace(LINK_TOKEN, (token) => {
-                const [, text, url] = token.match(LINK_PARTS);
-                // url is already HTML-escaped (no quotes or tags), so it cannot break out of the attribute
-                links.push(
-                    SAFE_LINK.test(url.replace(/&amp;/g, "&"))
-                        ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${renderEmphasis(text)}</a>`
-                        : token
-                );
-                return `\uE000${links.length - 1}\uE001`;
+            const slots = [];
+            const withSlots = escaped.replace(SLOT_SOURCE, (token) => {
+                const link = token.match(LINK_PARTS);
+                if (!link) {
+                    slots.push(token);
+                } else {
+                    const [, text, url] = link;
+                    // url is already HTML-escaped (no quotes or tags), so it cannot break out of the attribute
+                    slots.push(
+                        SAFE_LINK.test(url.replace(/&amp;/g, "&"))
+                            ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${renderEmphasis(text)}</a>`
+                            : token
+                    );
+                }
+                return `${SLOT_OPEN}${slots.length - 1}${SLOT_CLOSE}`;
             });
             return renderEmphasis(withSlots)
-                .replace(LINK_SLOT, (slot, i) => links[Number(i)])
+                .replace(LINK_SLOT, (slot, i) => slots[Number(i)])
                 .replace(/\n/g, "<br>");
         }
 

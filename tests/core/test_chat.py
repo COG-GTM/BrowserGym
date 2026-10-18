@@ -342,3 +342,13 @@ def test_emphasis_spans_links(chat, msg, wrapper):
     assert link.get_attribute("href") == "https://example.com/*x*"
     assert link.inner_text() == "docs"
     assert "*" not in bubble.inner_text()
+
+
+def test_placeholder_like_characters_are_preserved(chat):
+    msg = "a\ue000b\ue0011\ue001 **[x\ue000](https://example.com/\ue000asset\ue001)** \ue0000\ue001"
+    chat.add_message("assistant", msg)
+    bubble = bubbles(chat, "assistant").last
+    link = bubble.locator("strong > a")
+    assert link.get_attribute("href") == "https://example.com/\ue000asset\ue001"
+    assert link.inner_text() == "x\ue000"
+    assert bubble.inner_text() == "a\ue000b\ue0011\ue001 x\ue000 \ue0000\ue001"
