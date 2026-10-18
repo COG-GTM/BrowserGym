@@ -19,6 +19,7 @@ CONTEXT_DESTROYED = (
     "Page.evaluate: Execution context was destroyed, most likely because of a navigation"
 )
 TARGET_CLOSED = "Page.evaluate: Target page, context or browser has been closed"
+FRAME_DETACHED = "Page.evaluate: Frame has been detached."
 NOT_FOUND = "Page.evaluate: TypeError: Cannot read properties of null (reading 'outerText')"
 
 
@@ -39,6 +40,9 @@ class FakePage:
         self.calls.append(("wait_for_load_state", state))
         if state == "networkidle" and self.networkidle_timeout:
             raise PlaywrightTimeoutError("Timeout exceeded waiting for networkidle")
+
+    def wait_for_timeout(self, timeout):
+        self.calls.append(("wait_for_timeout", timeout))
 
     def evaluate(self, expression):
         self.calls.append(("evaluate", expression))
@@ -81,6 +85,26 @@ def test_waits_for_load_state_instead_of_sleeping(tmp_path, monkeypatch):
     ]
 
 
+def test_freshly_navigated_page_settles_before_evaluation(tmp_path):
+    page = FakePage(["42"])
+
+    evaluate(tmp_path, page)
+
+    waits = [call[1] for call in page.calls if call[0] == "wait_for_timeout"]
+    assert len(waits) == 1 and 0 < waits[0] <= evaluators.MIN_SETTLE_MS
+    assert page.calls.index(("wait_for_timeout", waits[0])) < [c[0] for c in page.calls].index(
+        "evaluate"
+    )
+
+
+def test_last_url_target_does_not_settle(tmp_path):
+    page = FakePage(["42"])
+
+    evaluate(tmp_path, page, url="last")
+
+    assert not any(call[0] in ("goto", "wait_for_timeout") for call in page.calls)
+
+
 def test_locator_not_found_scores_zero_and_is_logged(tmp_path, caplog):
     page = FakePage([PlaywrightError(NOT_FOUND)])
 
@@ -91,8 +115,9 @@ def test_locator_not_found_scores_zero_and_is_logged(tmp_path, caplog):
     assert "#total" in caplog.text
 
 
-def test_destroyed_context_is_retried_after_page_settles(tmp_path, caplog):
-    page = FakePage([PlaywrightError(CONTEXT_DESTROYED), "42"])
+@pytest.mark.parametrize("message", [CONTEXT_DESTROYED, FRAME_DETACHED])
+def test_destroyed_context_is_retried_after_page_settles(tmp_path, caplog, message):
+    page = FakePage([PlaywrightError(message), "42"])
 
     with caplog.at_level(logging.WARNING, logger=evaluators.__name__):
         assert evaluate(tmp_path, page) == 1.0
@@ -100,7 +125,7 @@ def test_destroyed_context_is_retried_after_page_settles(tmp_path, caplog):
     evaluate_calls = [i for i, call in enumerate(page.calls) if call[0] == "evaluate"]
     assert len(evaluate_calls) == 2
     assert ("wait_for_load_state", "load") in page.calls[evaluate_calls[0] : evaluate_calls[1]]
-    assert "Execution context was destroyed" in caplog.text
+    assert message in caplog.text
 
 
 def test_persistent_page_error_raises_instead_of_scoring_zero(tmp_path, caplog):

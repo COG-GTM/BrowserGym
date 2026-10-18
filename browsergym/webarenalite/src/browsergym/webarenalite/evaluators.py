@@ -9,6 +9,7 @@ import html
 import importlib
 import json
 import logging
+import time
 import urllib
 from pathlib import Path
 from typing import Union
@@ -37,6 +38,9 @@ logger = logging.getLogger(__name__)
 # bounds for waiting on the target page before evaluating locators
 PAGE_LOAD_TIMEOUT_MS = 30_000
 NETWORK_IDLE_TIMEOUT_MS = 5_000
+# content scheduled after load (timers, late XHRs) is invisible to networkidle,
+# so never evaluate a freshly navigated page earlier than this
+MIN_SETTLE_MS = 3_000
 
 # Playwright error messages that mean the page itself could not be evaluated
 # (closed/crashed target, navigation race), as opposed to a locator that
@@ -48,6 +52,7 @@ _INFRASTRUCTURE_ERROR_MARKERS = (
     "Target closed",
     "Browser has been closed",
     "Frame was detached",
+    "Frame has been detached",
     "Page crashed",
     "page is navigating",
 )
@@ -66,7 +71,7 @@ def _is_infrastructure_error(error: BaseException) -> bool:
     return any(marker in message for marker in _INFRASTRUCTURE_ERROR_MARKERS)
 
 
-def _wait_for_page_ready(page: Page | PseudoPage) -> None:
+def _wait_for_page_ready(page: Page | PseudoPage, navigated_at: float | None = None) -> None:
     page.wait_for_load_state("load", timeout=PAGE_LOAD_TIMEOUT_MS)
     try:
         page.wait_for_load_state("networkidle", timeout=NETWORK_IDLE_TIMEOUT_MS)
@@ -76,6 +81,10 @@ def _wait_for_page_ready(page: Page | PseudoPage) -> None:
             page.url,
             NETWORK_IDLE_TIMEOUT_MS,
         )
+    if navigated_at is not None:
+        remaining_ms = MIN_SETTLE_MS - (time.monotonic() - navigated_at) * 1000
+        if remaining_ms > 0:
+            page.wait_for_timeout(remaining_ms)
 
 
 def _query_page(page: Page | PseudoPage, query, description: str):
@@ -341,8 +350,9 @@ class HTMLContentEvaluator(Evaluator):
 
             # navigate to that url
             if target_url != "last":
+                navigated_at = time.monotonic()
                 page.goto(target_url)
-                _wait_for_page_ready(page)
+                _wait_for_page_ready(page, navigated_at=navigated_at)
 
             # empty, use the full page
             if not locator.strip():
