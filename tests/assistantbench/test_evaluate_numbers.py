@@ -102,3 +102,8 @@ def test_evaluate_numbers_non_numeric_scores_zero(pred, gold):
 def test_evaluate_numbers_matches_distance_function_log():
     for pred, gold in [(7, 3), (3, 7), (0, 2), (-2, -8), (1.5, -1.5)]:
         assert evaluate_numbers(pred, gold) == pytest.approx(distance_function_log(pred, gold))
+
+
+def test_distance_function_log_matches_stored_fixture_score_exactly():
+    # test_evaluation.py compares against stored scores with exact equality
+    assert distance_function_log(250.0, 395) == 0.5425751529611245

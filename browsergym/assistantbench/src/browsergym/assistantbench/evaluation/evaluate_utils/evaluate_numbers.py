@@ -13,7 +13,11 @@ def distance_function_log(pred: float, gold: float):
         gold = 1e-4
     if (pred < 0) != (gold < 0):
         return 0
-    return max(0, 1 - abs(np.log(pred / gold)))
+    pred, gold = abs(pred), abs(gold)
+    if pred > gold:
+        return max(0, 1 - np.log(pred / gold))
+    else:
+        return max(0, 1 - np.log(gold / pred))
 
 
 def evaluate_numbers(pred: Union[float, str], gold: float):
