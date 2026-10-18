@@ -113,8 +113,14 @@ class AnyBox(Space[NDArray[Any]]):
         """Return boolean specifying if x is a valid member of this space."""
         if not isinstance(x, np.ndarray):
             try:
+                raw = np.asarray(x)
                 x = np.asarray(x, dtype=self.dtype)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
+                return False
+            # older numpy silently wraps out-of-range values on conversion, check them before the cast
+            if raw.dtype.kind in "biuf" and not (
+                np.all(raw >= self.low) and np.all(raw <= self.high)
+            ):
                 return False
 
         return bool(
@@ -133,8 +139,8 @@ class AnyBox(Space[NDArray[Any]]):
         """Check whether ``other`` is equivalent to this instance."""
         return (
             isinstance(other, AnyBox)
-            and self.low == other.low
-            and self.high == other.high
             and self.shape == other.shape
             and self.dtype == other.dtype
+            and np.array_equal(self.low, other.low)
+            and np.array_equal(self.high, other.high)
         )
