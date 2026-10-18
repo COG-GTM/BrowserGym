@@ -1,6 +1,7 @@
 import logging
 import multiprocessing as mp
 import os
+import queue
 import traceback
 import typing
 from typing import Literal
@@ -264,8 +265,8 @@ def massage_task_within_subprocess(
       - err_msg: error message if any, or None.
     """
 
-    queue = mp.Queue()
-    process = mp.Process(target=run_massage, args=(queue, task_id))
+    outcome_queue = mp.Queue()
+    process = mp.Process(target=run_massage, args=(outcome_queue, task_id))
     process.start()
     process.join(timeout=timeout)
 
@@ -280,6 +281,13 @@ def massage_task_within_subprocess(
                 f"Massage sub-process still alive {kill_timeout} seconds after kill(), you might have a zombie process now."
             )
     else:
-        outcome = queue.get_nowait()
+        try:
+            outcome = outcome_queue.get(timeout=kill_timeout)
+        except queue.Empty:
+            # the sub-process died before reporting an outcome (e.g., crash in gym.make() or env.close())
+            outcome = (
+                "exception",
+                f"Massage sub-process exited with code {process.exitcode} without reporting an outcome",
+            )
 
     return outcome
