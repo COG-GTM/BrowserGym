@@ -76,8 +76,10 @@ def fill(bid: str, value: str, enable_autocomplete_menu: bool = False):
             delay = max(2000 / max(len(value), 1), 10)
             elem.clear(force=force, timeout=500)
             if value:
-                # bounded, with per-character headroom for slow page input handlers
-                elem.type(value, delay=delay, timeout=2000 + len(value) * (delay + 500))
+                # resolve the element first so a missing/detached field fails fast,
+                # then allow per-character headroom for slow page input handlers
+                handle = elem.element_handle(timeout=500)
+                handle.type(value, delay=delay, timeout=2000 + len(value) * (delay + 500))
         elif enable_autocomplete_menu:
             # Hybrid: fill n-1 chars, type the last one to trigger autocomplete
             elem.clear(force=force, timeout=500)
