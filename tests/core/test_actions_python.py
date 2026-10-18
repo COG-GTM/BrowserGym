@@ -49,6 +49,82 @@ a = 0
 b = 3
 """,
     ),
+    (
+        """\
+Here is the code:
+```python
+a = 0
+```
+""",
+        """\
+a = 0
+""",
+    ),
+    (
+        """\
+
+  ```python
+a = 0
+```
+""",
+        """\
+a = 0
+""",
+    ),
+    (
+        """\
+I will set a.
+```
+a = 0
+```
+Then b is unchanged.""",
+        """\
+a = 0
+""",
+    ),
+    (
+        """\
+```python
+a = 0
+```""",
+        """\
+a = 0
+""",
+    ),
+    (
+        """\
+Step one:
+```python
+a = 0
+```
+Step two:
+```
+b = 3
+```
+Done.
+""",
+        """\
+a = 0
+
+b = 3
+""",
+    ),
+    (
+        """\
+send_message_to_user('''Example:
+```python
+page.get_by_role("button", name="Delete").click()
+```
+''')
+""",
+        """\
+send_message_to_user('''Example:
+```python
+page.get_by_role("button", name="Delete").click()
+```
+''')
+""",
+    ),
 ]
 
 
