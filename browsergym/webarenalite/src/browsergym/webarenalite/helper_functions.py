@@ -4,6 +4,8 @@ Implements helper functions to assist evaluation cases where other evaluators ar
 """
 
 import json
+import threading
+import time
 from typing import Any
 from urllib.parse import urlparse
 
@@ -24,28 +26,61 @@ from webarena.llms.providers.openai_utils import (
 )
 
 
-def shopping_get_auth_token() -> str:
-    response = requests.post(
-        url=f"{SHOPPING}/rest/default/V1/integration/admin/token",
-        headers={"content-type": "application/json"},
-        data=json.dumps(
-            {
-                "username": ACCOUNTS["shopping_site_admin"]["username"],
-                "password": ACCOUNTS["shopping_site_admin"]["password"],
-            }
-        ),
-    )
-    token: str = response.json()
-    return token
+# Magento admin tokens expire after 4 hours by default; refresh a bit earlier.
+SHOPPING_ADMIN_TOKEN_TTL = 3.5 * 60 * 60
+SHOPPING_REQUEST_TIMEOUT = 30
+
+_shopping_token_lock = threading.Lock()
+_shopping_token_cache: dict[tuple[str, str], tuple[str, float]] = {}
+
+
+def shopping_get_auth_token(rejected_token: str | None = None) -> str:
+    """Return the cached admin token, fetching a new one if it is missing, expired or rejected."""
+    username = ACCOUNTS["shopping_site_admin"]["username"]
+    cache_key = (SHOPPING, username)
+    with _shopping_token_lock:
+        cached = _shopping_token_cache.get(cache_key)
+        if cached is not None and cached[0] != rejected_token and time.monotonic() < cached[1]:
+            return cached[0]
+
+        response = requests.post(
+            url=f"{SHOPPING}/rest/default/V1/integration/admin/token",
+            headers={"content-type": "application/json"},
+            data=json.dumps(
+                {
+                    "username": username,
+                    "password": ACCOUNTS["shopping_site_admin"]["password"],
+                }
+            ),
+            timeout=SHOPPING_REQUEST_TIMEOUT,
+        )
+        token: str = response.json()
+        if response.status_code == 200 and isinstance(token, str):
+            _shopping_token_cache[cache_key] = (
+                token,
+                time.monotonic() + SHOPPING_ADMIN_TOKEN_TTL,
+            )
+        else:
+            _shopping_token_cache.pop(cache_key, None)
+        return token
+
+
+def _shopping_admin_get(url: str, params: dict[str, str] | None = None) -> requests.Response:
+    """GET a Magento REST endpoint with the cached admin token, re-fetching it once on a 401."""
+
+    def get(token: str) -> requests.Response:
+        header = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        return requests.get(url, params=params, headers=header, timeout=SHOPPING_REQUEST_TIMEOUT)
+
+    token = shopping_get_auth_token()
+    response = get(token)
+    if response.status_code == 401:
+        response = get(shopping_get_auth_token(rejected_token=token))
+    return response
 
 
 def shopping_get_latest_order_url() -> str:
     """Get the latest order url from the shopping website."""
-
-    header = {
-        "Authorization": f"Bearer {shopping_get_auth_token()}",
-        "Content-Type": "application/json",
-    }
 
     params = {
         "searchCriteria[sortOrders][0][field]": "created_at",
@@ -53,7 +88,7 @@ def shopping_get_latest_order_url() -> str:
         "searchCriteria[pageSize]": "1",
     }
 
-    response = requests.get(f"{SHOPPING}/rest/V1/orders", params=params, headers=header)
+    response = _shopping_admin_get(f"{SHOPPING}/rest/V1/orders", params=params)
     assert response.status_code == 200
     response_obj = response.json()["items"][0]
     order_id = int(response_obj["increment_id"])
@@ -63,11 +98,7 @@ def shopping_get_latest_order_url() -> str:
 
 def shopping_get_sku_latest_review_author(sku: str) -> str:
     """Get the latest review for shopping admin."""
-    header = {
-        "Authorization": f"Bearer {shopping_get_auth_token()}",
-        "Content-Type": "application/json",
-    }
-    response = requests.get(f"{SHOPPING}/rest/V1/products/{sku}/reviews", headers=header)
+    response = _shopping_admin_get(f"{SHOPPING}/rest/V1/products/{sku}/reviews")
     assert response.status_code == 200
     response_obj = response.json()
     if len(response_obj) == 0:
@@ -78,11 +109,7 @@ def shopping_get_sku_latest_review_author(sku: str) -> str:
 
 def shopping_get_sku_latest_review_rating(sku: str) -> str:
     """Get the latest review for shopping admin."""
-    header = {
-        "Authorization": f"Bearer {shopping_get_auth_token()}",
-        "Content-Type": "application/json",
-    }
-    response = requests.get(f"{SHOPPING}/rest/V1/products/{sku}/reviews", headers=header)
+    response = _shopping_admin_get(f"{SHOPPING}/rest/V1/products/{sku}/reviews")
     assert response.status_code == 200
     response_obj = response.json()
     if len(response_obj) == 0:
