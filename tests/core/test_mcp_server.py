@@ -3,6 +3,7 @@ import pathlib
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest import mock
 
@@ -28,6 +29,16 @@ def fresh_global_playwright(monkeypatch):
     pw = browsergym.core._PLAYWRIGHT
     if pw is not None:
         mcp_server.PLAYWRIGHT_EXECUTOR.submit(pw.stop).result()
+
+
+def _run_event_loop(scenario):
+    """Run the scenario on its own event loop thread, like the MCP server's stdio loop.
+
+    The pytest main thread may already host a running loop (e.g. a sync Playwright started by
+    another test), where asyncio.run() is not allowed.
+    """
+    with ThreadPoolExecutor(max_workers=1) as loop_thread:
+        return loop_thread.submit(lambda: asyncio.run(scenario())).result()
 
 
 def _patch_mcp_context(monkeypatch, app_ctx):
@@ -91,7 +102,10 @@ def test_env_and_actions_pinned_to_one_thread_and_serialized(monkeypatch):
     monkeypatch.setattr(fn_context, "noop", noop)
     monkeypatch.setattr(fn_context, "failing", failing, raising=False)
 
+    loop_thread_ids = set()
+
     async def scenario():
+        loop_thread_ids.add(threading.get_ident())
         results = []
         for _ in range(2):
             async with mcp_server.app_lifespan(mcp_server.mcp) as app_ctx:
@@ -101,7 +115,7 @@ def test_env_and_actions_pinned_to_one_thread_and_serialized(monkeypatch):
                 results += await asyncio.gather(*[tool() for _ in range(8)], failing_tool())
         return results
 
-    results = asyncio.run(scenario())
+    results = _run_event_loop(scenario)
 
     expected_errors = ([""] * 8 + ["ValueError: boom"]) * 2
     assert [obs["last_action_error"] for obs, *_ in results] == expected_errors
@@ -112,7 +126,7 @@ def test_env_and_actions_pinned_to_one_thread_and_serialized(monkeypatch):
     # Same thread across both lifespans, since the global Playwright instance outlives them.
     thread_ids = {ident for _, ident in env.calls}
     assert len(thread_ids) == 1
-    assert threading.main_thread().ident not in thread_ids
+    assert not thread_ids & (loop_thread_ids | {threading.main_thread().ident})
     assert env.max_active_steps == 1
 
 
@@ -145,4 +159,4 @@ def test_concurrent_tool_calls_on_real_browser(monkeypatch, fresh_global_playwri
             assert obs["last_action_error"] == ""
             assert obs["url"] == EXAMPLE_URL
 
-    asyncio.run(scenario())
+    _run_event_loop(scenario)
