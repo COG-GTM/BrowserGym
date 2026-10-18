@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 PAGE_LOAD_TIMEOUT_MS = 30_000
 NETWORK_IDLE_TIMEOUT_MS = 5_000
 # content scheduled after load (timers, late XHRs) is invisible to networkidle,
-# so never evaluate a freshly navigated page earlier than this
+# so never evaluate a page earlier than this after page.goto() returns
 MIN_SETTLE_MS = 3_000
 
 # Playwright error messages that mean the page itself could not be evaluated
@@ -350,9 +350,8 @@ class HTMLContentEvaluator(Evaluator):
 
             # navigate to that url
             if target_url != "last":
-                navigated_at = time.monotonic()
                 page.goto(target_url)
-                _wait_for_page_ready(page, navigated_at=navigated_at)
+                _wait_for_page_ready(page, navigated_at=time.monotonic())
 
             # empty, use the full page
             if not locator.strip():

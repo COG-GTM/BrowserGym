@@ -97,6 +97,23 @@ def test_freshly_navigated_page_settles_before_evaluation(tmp_path):
     )
 
 
+def test_settle_window_starts_after_slow_navigation(tmp_path, monkeypatch):
+    clock = {"now": 100.0}
+    monkeypatch.setattr(evaluators.time, "monotonic", lambda: clock["now"])
+    page = FakePage(["42"])
+    original_goto = page.goto
+
+    def slow_goto(url):
+        original_goto(url)
+        clock["now"] += 4.0
+
+    page.goto = slow_goto
+
+    evaluate(tmp_path, page)
+
+    assert ("wait_for_timeout", evaluators.MIN_SETTLE_MS) in page.calls
+
+
 def test_last_url_target_does_not_settle(tmp_path):
     page = FakePage(["42"])
 
