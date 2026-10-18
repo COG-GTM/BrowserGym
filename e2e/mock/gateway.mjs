@@ -8,7 +8,7 @@
 // Env: GATEWAY_PORT (4000), PRISM_URL (http://127.0.0.1:4010), SSE_DELAY_MS (250).
 import { createServer, request as httpRequest } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
-import { dirname, extname, join, normalize } from "node:path";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -54,7 +54,7 @@ function streamEvents(req, res, runId, url) {
     if (event.type === "status" && TERMINAL.has(event.status)) return res.end();
     timer = setTimeout(next, delay);
   };
-  req.on("close", () => clearTimeout(timer));
+  res.on("close", () => clearTimeout(timer));
   next();
 }
 
@@ -76,9 +76,14 @@ function proxyToPrism(req, res, apiPath) {
 function serveStatic(res, pathname) {
   const fixture = pathname.startsWith("/fixtures/");
   const root = fixture ? FIXTURES : WEB_ROOT;
-  const rel = normalize(fixture ? pathname.slice("/fixtures/".length) : pathname).replace(/^(\.\.[/\\])+/, "");
-  let file = join(root, rel);
-  if (!file.startsWith(root) || !existsSync(file) || extname(file) === "") file = join(WEB_ROOT, "index.html");
+  let rel;
+  try {
+    rel = decodeURIComponent(fixture ? pathname.slice("/fixtures/".length) : pathname);
+  } catch {
+    rel = "";
+  }
+  let file = resolve(root, `.${sep}${rel}`);
+  if (!file.startsWith(root + sep) || !existsSync(file) || extname(file) === "") file = join(WEB_ROOT, "index.html");
   res.writeHead(200, { "Content-Type": MIME[extname(file)] ?? "application/octet-stream", "Cache-Control": "no-store" });
   res.end(readFileSync(file));
 }
