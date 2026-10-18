@@ -13,6 +13,7 @@ def test_dry_run_end_to_end(tmp_path, capsys):
     assert "n_steps: 3" in out
 
     (exp_dir,) = list(tmp_path.iterdir())
+    assert "_DemoAgentArgs_on_openended_" in exp_dir.name
     assert (exp_dir / "screenshot_step_3.png").exists()
     with gzip.open(exp_dir / "step_2.pkl.gz") as f:
         step = pickle.load(f)

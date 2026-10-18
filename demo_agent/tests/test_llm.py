@@ -46,9 +46,12 @@ def test_mock_is_deterministic_and_follows_script():
 
 def test_mock_counts_bids_in_html_observation():
     client = MockLLMClient()
-    html = [{"type": "text", "text": '<button bid="4">Submit</button><a bid="5">x</a> [4]'}]
+    html = [
+        {"type": "text", "text": '<button bid="4">Submit</button><a bid="5">x</a> [4]'},
+        {"type": "text", "text": '<iframe bid="a"><button bid="a0">'},
+    ]
     reply = [client.complete([], html).text for _ in range(3)][-1]
-    assert "2 elements with a bid" in reply
+    assert "4 elements with a bid" in reply
 
 
 def test_mock_reports_usage():

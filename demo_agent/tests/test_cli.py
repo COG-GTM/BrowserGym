@@ -50,6 +50,7 @@ def test_agent_args_default_model_follows_provider():
     from agent import DemoAgentArgs
 
     assert DemoAgentArgs().model_name == "gpt-5-mini"
+    assert DemoAgentArgs().agent_name == "DemoAgentArgs"
     assert DemoAgentArgs(provider="anthropic").model_name == "claude-sonnet-4-5"
     assert DemoAgentArgs(provider="mock").make_agent().llm.model == "mock-deterministic"
     explicit = DemoAgentArgs(provider="anthropic", model_name="claude-haiku-4-5")

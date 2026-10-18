@@ -367,6 +367,7 @@ class DemoAgentArgs(AbstractAgentArgs):
     use_screenshot: bool = False
 
     def __post_init__(self):
+        super().__post_init__()
         self.model_name = self.model_name or DEFAULT_MODELS[self.provider]
 
     def make_agent(self):

@@ -322,7 +322,7 @@ class MockLLMClient(LLMClient):
             title = _active_tab_field(prompt, "Title") or "unknown"
             url = _active_tab_field(prompt, "URL") or "unknown"
             # AXTree lines look like "[12] button", pruned HTML like '<button bid="12">'
-            bids = re.findall(r"\[(\d+)\]|\bbid=\"(\d+)\"", prompt)
+            bids = re.findall(r"\[([a-zA-Z0-9]+)\]|\bbid=\"([a-zA-Z0-9]+)\"", prompt)
             n_bids = len({a or b for a, b in bids})
             summary = (
                 f"Dry run complete. Active tab: {title!r} ({url}), "
