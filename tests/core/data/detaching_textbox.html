@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Detaching Textbox</title>
+</head>
+
+<body>
+    <label for="textbox">Enter some text:</label>
+    <input type="text" id="textbox" name="textbox" value="prefilled">
+    <script>
+        // re-render the field (fresh node, no bid) as soon as it gets cleared
+        document.getElementById("textbox").addEventListener("input", (event) => {
+            if (event.target.value === "") {
+                const fresh = document.createElement("input");
+                fresh.type = "text";
+                fresh.id = "textbox";
+                fresh.name = "textbox";
+                event.target.replaceWith(fresh);
+            }
+        });
+    </script>
+</body>
+
+</html>

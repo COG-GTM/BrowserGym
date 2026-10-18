@@ -73,9 +73,13 @@ def fill(bid: str, value: str, enable_autocomplete_menu: bool = False):
     def do(force: bool):
         if demo_mode != "off":
             # Demo mode: full typing for visual effect
-            delay = max(2000 / len(value), 10)
+            delay = max(2000 / max(len(value), 1), 10)
             elem.clear(force=force, timeout=500)
-            elem.type(value, delay=delay, timeout=0)
+            if value:
+                # a missing field fails fast; typing gets per-character headroom for
+                # slow input handlers, and the locator follows a re-rendered field
+                elem.wait_for(state="attached", timeout=2000)
+                elem.type(value, delay=delay, timeout=2000 + len(value) * (delay + 500))
         elif enable_autocomplete_menu:
             # Hybrid: fill n-1 chars, type the last one to trigger autocomplete
             elem.clear(force=force, timeout=500)
