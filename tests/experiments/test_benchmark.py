@@ -3,13 +3,16 @@ import os
 import random
 import re
 import tempfile
+import typing
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from browsergym.core.action.base import AbstractActionSet
 from browsergym.experiments.agent import Agent
 from browsergym.experiments.benchmark import Benchmark, HighLevelActionSetArgs
+from browsergym.experiments.benchmark.base import BenchmarkBackend
 from browsergym.experiments.benchmark.configs import DEFAULT_BENCHMARKS
 from browsergym.experiments.benchmark.utils import make_env_args_list_from_fixed_seeds
 from browsergym.experiments.loop import AbstractAgentArgs, ExpArgs, get_exp_result
@@ -350,3 +353,179 @@ def test_dependency_graphs():
     assert [{k: set(v) for k, v in deps.items()} for deps in env_args_dependencies] == [
         {k: set(v) for k, v in {0: [], 1: [], 2: [1], 3: [0, 2], 4: [3], 5: [3, 4]}.items()}
     ]
+
+
+def _make_split_benchmark(task_metadata="default", backends=("miniwob",)):
+    task_splits = {
+        "fake.task-a": "train",
+        "fake.task-b": "train",
+        "fake.task-c": "valid",
+        "fake.task-d": "test",
+        "fake.task-e": "pretrain",
+        "fake.task-f": "test_extra",
+    }
+    if isinstance(task_metadata, str) and task_metadata == "default":
+        task_metadata = pd.DataFrame(
+            [
+                {"task_name": task_name, "browsergym_split": split}
+                for task_name, split in task_splits.items()
+            ]
+        )
+    return Benchmark(
+        name="fake_bench",
+        high_level_action_set_args=HighLevelActionSetArgs(subsets=["bid"]),
+        is_multi_tab=False,
+        supports_parallel_seeds=True,
+        backends=list(backends),
+        env_args_list=make_env_args_list_from_fixed_seeds(
+            task_list=list(task_splits.keys()),
+            max_steps=5,
+            fixed_seeds=[0, 1],
+        ),
+        task_metadata=task_metadata,
+    )
+
+
+def _task_names(benchmark: Benchmark):
+    return [env_args.task_name for env_args in benchmark.env_args_list]
+
+
+def test_benchmark_subset_from_list():
+    benchmark = _make_split_benchmark()
+
+    subset = benchmark.subset_from_list(["fake.task-c", "fake.task-a"], split="train")
+    assert subset.name == "fake_bench_custom_train"
+    assert _task_names(subset) == ["fake.task-a", "fake.task-a", "fake.task-c", "fake.task-c"]
+    assert [env_args.task_seed for env_args in subset.env_args_list] == [0, 1, 0, 1]
+    assert subset.high_level_action_set_args == benchmark.high_level_action_set_args
+    assert subset.is_multi_tab == benchmark.is_multi_tab
+    assert subset.supports_parallel_seeds == benchmark.supports_parallel_seeds
+    assert subset.backends == benchmark.backends
+    assert subset.task_metadata is benchmark.task_metadata
+
+    # the original benchmark is left untouched
+    assert len(benchmark.env_args_list) == 12
+
+    # default suffix, no split
+    subset = benchmark.subset_from_list(["fake.task-d"])
+    assert subset.name == "fake_bench_custom"
+    assert _task_names(subset) == ["fake.task-d", "fake.task-d"]
+
+    # custom suffix, duplicates in the task list are not duplicated in the subset
+    subset = benchmark.subset_from_list(
+        ["fake.task-b", "fake.task-b"], benchmark_name_suffix="mine"
+    )
+    assert subset.name == "fake_bench_mine"
+    assert _task_names(subset) == ["fake.task-b", "fake.task-b"]
+
+    # serialization round trip
+    assert Benchmark.from_json(subset.to_json()).to_dict() == subset.to_dict()
+
+
+def test_benchmark_subset_from_list_empty():
+    benchmark = _make_split_benchmark()
+
+    with pytest.raises(ValueError, match="Task list cannot be empty"):
+        benchmark.subset_from_list([])
+
+
+def test_benchmark_subset_from_list_unknown_task():
+    benchmark = _make_split_benchmark()
+
+    with pytest.raises(ValueError, match="do not exist in the benchmark") as exc_info:
+        benchmark.subset_from_list(["fake.task-a", "fake.does-not-exist"])
+    assert "fake.does-not-exist" in str(exc_info.value)
+    assert "fake.task-a'" not in str(exc_info.value)
+
+    # task present in the metadata but not in env_args_list is rejected too
+    benchmark = benchmark.subset_from_list(["fake.task-a"])
+    with pytest.raises(ValueError, match="do not exist in the benchmark"):
+        benchmark.subset_from_list(["fake.task-b"])
+
+
+def test_benchmark_subset_from_split():
+    benchmark = _make_split_benchmark()
+
+    train = benchmark.subset_from_split("train")
+    assert train.name == "fake_bench_train"
+    # exact match only: "pretrain" must not leak into train
+    assert _task_names(train) == ["fake.task-a", "fake.task-a", "fake.task-b", "fake.task-b"]
+
+    valid = benchmark.subset_from_split("valid")
+    assert valid.name == "fake_bench_valid"
+    assert _task_names(valid) == ["fake.task-c", "fake.task-c"]
+
+    test = benchmark.subset_from_split("test")
+    assert test.name == "fake_bench_test"
+    # exact match only: "test_extra" must not leak into test
+    assert _task_names(test) == ["fake.task-d", "fake.task-d"]
+
+    # splits are disjoint
+    assert not set(_task_names(train)) & set(_task_names(valid))
+    assert not set(_task_names(train)) & set(_task_names(test))
+    assert not set(_task_names(valid)) & set(_task_names(test))
+
+
+def test_benchmark_subset_from_split_missing_column():
+    benchmark = _make_split_benchmark(task_metadata=None)
+
+    with pytest.raises(NotImplementedError, match="browsergym_split"):
+        benchmark.subset_from_split("train")
+
+
+def test_benchmark_subset_from_split_empty():
+    benchmark = _make_split_benchmark()
+
+    # metadata still has a "valid" row, but no env_args left for it
+    benchmark = benchmark.subset_from_list(["fake.task-a", "fake.task-d"])
+    with pytest.raises(ValueError, match="default valid split for this benchmark is empty"):
+        benchmark.subset_from_split("valid")
+
+    task_metadata = pd.DataFrame(
+        [{"task_name": f"fake.task-{letter}", "browsergym_split": "train"} for letter in "abcdef"]
+    )
+    benchmark = _make_split_benchmark(task_metadata=task_metadata)
+    with pytest.raises(ValueError, match="default test split for this benchmark is empty"):
+        benchmark.subset_from_split("test")
+
+
+def test_benchmark_unknown_backend():
+    with pytest.raises(ValueError, match="Unknown Benchmark backend 'bogus'"):
+        _make_split_benchmark(backends=["miniwob", "bogus"])
+
+    # every declared backend is accepted
+    for backend in typing.get_args(BenchmarkBackend):
+        assert _make_split_benchmark(backends=[backend]).backends == [backend]
+
+
+def test_benchmark_default_task_metadata():
+    benchmark = _make_split_benchmark(task_metadata=None)
+
+    assert list(benchmark.task_metadata.columns) == ["task_name"]
+    assert sorted(benchmark.task_metadata["task_name"]) == [
+        f"fake.task-{letter}" for letter in "abcdef"
+    ]
+    # one row per unique task, not per env_args
+    assert len(benchmark.task_metadata) == 6
+
+    # default metadata still supports column-based subsetting
+    subset = benchmark.subset_from_regexp(column="task_name", regexp=r"task-[ab]$")
+    assert sorted(set(_task_names(subset))) == ["fake.task-a", "fake.task-b"]
+
+
+def test_benchmark_metadata_must_cover_env_args():
+    task_metadata = pd.DataFrame([{"task_name": "fake.task-a", "browsergym_split": "train"}])
+
+    with pytest.raises(AssertionError):
+        _make_split_benchmark(task_metadata=task_metadata)
+
+
+def test_benchmark_subset_from_task_ratio_zero_tasks():
+    benchmark = _make_split_benchmark()
+
+    # int(6 * 0.1) == 0: an empty subset is returned without error
+    subset = benchmark.subset_from_task_ratio(ratio=0.1, seed=0)
+    assert subset.env_args_list == []
+
+    subset = benchmark.subset_from_task_ratio(ratio=1.0, seed=0)
+    assert sorted(_task_names(subset)) == sorted(_task_names(benchmark))
