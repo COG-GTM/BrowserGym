@@ -1,0 +1,190 @@
+"use client";
+
+import { useCallback, useEffect, useReducer } from "react";
+import {
+  getApi,
+  isTerminal,
+  type ChatMessage,
+  type Run,
+  type RunEvent,
+  type Step,
+  type StreamState,
+} from "@/lib/api";
+
+export interface RunLiveState {
+  run: Run | null;
+  steps: Step[];
+  chat: ChatMessage[];
+  logs: { timestamp: string; message: string }[];
+  stream: StreamState | "idle";
+  error: Error | null;
+  loading: boolean;
+  pending: RunEvent[];
+}
+
+type Action =
+  | { type: "reset" }
+  | { type: "loaded"; run: Run; steps: Step[]; chat: ChatMessage[] }
+  | { type: "event"; event: RunEvent }
+  | { type: "stream"; state: StreamState }
+  | { type: "run"; run: Run }
+  | { type: "chat"; message: ChatMessage }
+  | { type: "error"; error: Error };
+
+const initial: RunLiveState = {
+  run: null,
+  steps: [],
+  chat: [],
+  logs: [],
+  stream: "idle",
+  error: null,
+  loading: true,
+  pending: [],
+};
+
+const chatKey = (m: ChatMessage) => `${m.role}|${m.timestamp}|${m.message}`;
+
+function mergeSteps(steps: Step[], incoming: Step[]): Step[] {
+  const byIndex = new Map(steps.map((s) => [s.index, s]));
+  for (const s of incoming) byIndex.set(s.index, s);
+  return [...byIndex.values()].sort((a, b) => a.index - b.index);
+}
+
+function mergeChat(chat: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  const seen = new Set(chat.map(chatKey));
+  const out = [...chat];
+  for (const m of incoming) {
+    if (seen.has(chatKey(m))) continue;
+    seen.add(chatKey(m));
+    out.push(m);
+  }
+  return out;
+}
+
+function applyEvent(state: RunLiveState, event: RunEvent): RunLiveState {
+  switch (event.type) {
+    case "step": {
+      if (!event.step) return state;
+      const steps = mergeSteps(state.steps, [event.step]);
+      const run = state.run
+        ? { ...state.run, n_steps: Math.max(state.run.n_steps, event.step.index + 1) }
+        : state.run;
+      return { ...state, steps, run };
+    }
+    case "status": {
+      if (!event.status || !state.run) return state;
+      const run: Run = { ...state.run, status: event.status };
+      if (event.status === "running" && !run.started_at) run.started_at = event.timestamp;
+      if (isTerminal(event.status) && !run.finished_at) run.finished_at = event.timestamp;
+      return { ...state, run };
+    }
+    case "chat":
+      return event.chat ? { ...state, chat: mergeChat(state.chat, [event.chat]) } : state;
+    case "log":
+      return event.log
+        ? { ...state, logs: [...state.logs, { timestamp: event.timestamp, message: event.log }].slice(-200) }
+        : state;
+    default:
+      return state;
+  }
+}
+
+function reducer(state: RunLiveState, action: Action): RunLiveState {
+  switch (action.type) {
+    case "reset":
+      return initial;
+    case "loaded": {
+      let next: RunLiveState = {
+        ...state,
+        run: action.run,
+        steps: mergeSteps(action.steps, state.steps),
+        chat: mergeChat(action.chat, state.chat),
+        loading: false,
+        error: null,
+        pending: [],
+      };
+      for (const e of state.pending) next = applyEvent(next, e);
+      return next;
+    }
+    case "event":
+      if (state.loading) return { ...state, pending: [...state.pending, action.event] };
+      return applyEvent(state, action.event);
+    case "stream":
+      return { ...state, stream: action.state };
+    case "run":
+      return { ...state, run: action.run };
+    case "chat":
+      return { ...state, chat: mergeChat(state.chat, [action.message]) };
+    case "error":
+      return { ...state, error: action.error, loading: false };
+  }
+}
+
+/**
+ * Loads a run (run + steps + chat) and keeps it live via the SSE event stream until
+ * a terminal status arrives, then re-fetches once to pick up reward/error/finished_at.
+ */
+export function useRunLive(runId: string) {
+  const [state, dispatch] = useReducer(reducer, initial);
+
+  const reload = useCallback(async () => {
+    const api = getApi();
+    const [run, steps, chat] = await Promise.all([api.getRun(runId), api.listSteps(runId), api.listChat(runId)]);
+    dispatch({ type: "loaded", run, steps, chat });
+    return run;
+  }, [runId]);
+
+  useEffect(() => {
+    const api = getApi();
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+    dispatch({ type: "reset" });
+
+    // Subscribe first (buffering events) so nothing emitted during the initial fetch is lost.
+    const subscribe = () =>
+      api.subscribeRunEvents(runId, {
+        onEvent: (event) => {
+          if (cancelled) return;
+          dispatch({ type: "event", event });
+          if (event.type === "status" && event.status && isTerminal(event.status)) {
+            setTimeout(() => {
+              if (!cancelled) reload().catch(() => {});
+            }, 300);
+          }
+        },
+        onStateChange: (s) => !cancelled && dispatch({ type: "stream", state: s }),
+      });
+
+    unsubscribe = subscribe();
+    reload()
+      .then((run) => {
+        if (cancelled) return;
+        if (isTerminal(run.status)) {
+          unsubscribe?.();
+          unsubscribe = undefined;
+          dispatch({ type: "stream", state: "closed" });
+        }
+      })
+      .catch((error: Error) => !cancelled && dispatch({ type: "error", error }));
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, [runId, reload]);
+
+  const cancel = useCallback(async () => {
+    const run = await getApi().cancelRun(runId);
+    dispatch({ type: "run", run });
+  }, [runId]);
+
+  const sendChat = useCallback(
+    async (message: string) => {
+      const msg = await getApi().sendChat(runId, message);
+      dispatch({ type: "chat", message: msg });
+    },
+    [runId],
+  );
+
+  return { ...state, cancel, sendChat, reload };
+}
