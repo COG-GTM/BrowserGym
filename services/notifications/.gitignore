@@ -1,0 +1,4 @@
+.venv/
+*.db
+.pytest_cache/
+.ruff_cache/
