@@ -19,7 +19,6 @@ logger = logging.getLogger("side_notifications.expo")
 
 PUSH_BATCH_SIZE = 100
 RECEIPT_BATCH_SIZE = 1000
-RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
 class ExpoError(Exception):
@@ -91,7 +90,7 @@ class ExpoClient:
             except httpx.TransportError as exc:
                 last_error = ExpoError(f"transport error: {exc!r}", retryable=True)
             else:
-                if resp.status_code in RETRYABLE_STATUS:
+                if resp.status_code == 429 or 500 <= resp.status_code < 600:
                     retry_after = resp.headers.get("Retry-After")
                     last_error = ExpoError(
                         f"Expo HTTP {resp.status_code}: {resp.text[:200]}",
@@ -153,14 +152,23 @@ class ExpoClient:
                 )
         return tickets
 
-    async def get_receipts(self, ticket_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
-        """Fetch receipts (1000 ids/request). Ids without a receipt yet are absent."""
+    async def get_receipts(
+        self, ticket_ids: Sequence[str]
+    ) -> tuple[dict[str, dict[str, Any]], set[str]]:
+        """Fetch receipts (1000 ids/request).
+
+        Returns (receipts, queried_ids). Ids in `queried_ids` but not in `receipts` were looked
+        up successfully but have no receipt (yet); ids outside `queried_ids` were in a failed
+        request and should simply be retried later.
+        """
         receipts: dict[str, dict[str, Any]] = {}
+        queried: set[str] = set()
         for batch in chunked(list(ticket_ids), RECEIPT_BATCH_SIZE):
             try:
                 body = await self._post(self.receipts_url, {"ids": list(batch)})
             except ExpoError as exc:
                 logger.error("Expo receipts request for %d ids failed: %s", len(batch), exc)
                 continue
+            queried.update(batch)
             receipts.update(body.get("data") or {})
-        return receipts
+        return receipts, queried

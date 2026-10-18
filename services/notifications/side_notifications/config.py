@@ -33,7 +33,7 @@ class Settings:
     receipt_interval_s: float = 60.0
     receipt_min_age_s: float = 900.0
     deep_link_base: str = "side://runs/"
-    cors_origins: list[str] = field(default_factory=lambda: ["*"])
+    cors_origins: list[str] = field(default_factory=list)
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -52,6 +52,6 @@ class Settings:
             receipt_min_age_s=float(env.get("SIDE_PUSH_RECEIPT_MIN_AGE", "900")),
             deep_link_base=env.get("SIDE_DEEP_LINK_BASE", "side://runs/"),
             cors_origins=[
-                o.strip() for o in env.get("SIDE_CORS_ORIGINS", "*").split(",") if o.strip()
+                o.strip() for o in env.get("SIDE_CORS_ORIGINS", "").split(",") if o.strip()
             ],
         )

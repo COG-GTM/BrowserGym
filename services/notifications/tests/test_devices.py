@@ -58,3 +58,19 @@ def test_registration_persists_across_restarts(make_client):
     register(make_client(), token(1), run_ids=["r1"])
     second = make_client()
     assert second.app.state.store.get_device(token(1)).run_ids == ["r1"]
+
+
+def test_in_memory_store(make_client):
+    client = make_client(db_path=":memory:")
+    register(client, token(1), run_ids=["r1"])
+    assert client.app.state.store.subscribers("r1") == [token(1)]
+
+
+def test_cors_disabled_by_default(client, make_client):
+    headers = {"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"}
+    resp = client.options("/internal/run-events", headers=headers)
+    assert "access-control-allow-origin" not in resp.headers
+    allowed = make_client(cors_origins=["http://localhost:3000"])
+    headers["Origin"] = "http://localhost:3000"
+    resp = allowed.options("/api/v1/devices", headers=headers)
+    assert resp.headers["access-control-allow-origin"] == "http://localhost:3000"

@@ -47,6 +47,11 @@ curl -s -XDELETE 'localhost:8010/api/v1/devices/ExponentPushToken%5Bdemo-123%5D'
 | GET | `/internal/deliveries?run_id=&limit=` | Delivery log (`dry_run` / `pending` / `ok` / `error` / `expired`). |
 
 `/internal/*` requires header `X-Side-Notify-Secret: $SIDE_NOTIFY_SECRET` when that env var is set.
+If it is unset the service logs a warning at startup; only run it that way on a private network
+(e.g. the docker-compose network next to the API).
+
+Device endpoints are unauthenticated (Side has no user auth yet): an Expo push token acts as a
+bearer credential for its own registration.
 
 ## Push behaviour
 
@@ -54,12 +59,17 @@ curl -s -XDELETE 'localhost:8010/api/v1/devices/ExponentPushToken%5Bdemo-123%5D'
   `data = {"type":"run_status","run_id","status","url":"side://runs/<id>"}` (deep link base via
   `SIDE_DEEP_LINK_BASE`), `sound: default`, `priority: high`.
 - Batched to 100 messages per request to `https://exp.host/--/api/v2/push/send`.
-- Retries 429 / 5xx / transport errors with exponential backoff (honours `Retry-After`); other 4xx
-  are not retried. A batch that still fails is recorded as `error: RequestFailed` (tokens kept).
+- Retries 429 / any 5xx / transport errors with exponential backoff (honours `Retry-After`); other
+  4xx are not retried. A batch that still fails is recorded as `error: RequestFailed` (tokens kept)
+  and the run's dedupe claim is released, so a re-sent event retries just the tokens that never got
+  a ticket (no double pushes).
 - Tickets with `DeviceNotRegistered` prune the device immediately. Successful tickets are stored as
   `pending`; a background loop fetches receipts (`/push/getReceipts`, 1000 ids/request) for tickets
   older than `SIDE_PUSH_RECEIPT_MIN_AGE`, marks them `ok`/`error`, prunes `DeviceNotRegistered`
-  tokens, and expires tickets whose receipt never shows up within 24h.
+  tokens, and expires tickets whose receipt never shows up within 24h (only after a successful
+  lookup; a failed receipts request just leaves tickets pending).
+- Known limitation: background delivery is in-process (FastAPI `BackgroundTasks`). If the process
+  dies between the 202 and the push, that event stays claimed and is not retried.
 
 ## Configuration
 
@@ -67,7 +77,7 @@ curl -s -XDELETE 'localhost:8010/api/v1/devices/ExponentPushToken%5Bdemo-123%5D'
 |---|---|---|
 | `SIDE_PUSH_DRY_RUN` | `0` | `1` = log payloads, never call Expo (tests always use dry run or mock Expo) |
 | `SIDE_NOTIFY_SECRET` | unset | shared secret for `/internal/*` |
-| `SIDE_NOTIFY_DB` | `$SIDE_DATA_DIR/notifications.db` (`./.side-data/notifications.db`) | SQLite file |
+| `SIDE_NOTIFY_DB` | `$SIDE_DATA_DIR/notifications.db` (`./.side-data/notifications.db`) | SQLite file, or `:memory:` |
 | `SIDE_NOTIFY_HOST` / `SIDE_NOTIFY_PORT` | `0.0.0.0` / `8010` | |
 | `EXPO_ACCESS_TOKEN` | unset | sent as `Authorization: Bearer` if Expo enhanced push security is on |
 | `SIDE_PUSH_MAX_RETRIES` | `3` | retries per request |
@@ -75,7 +85,7 @@ curl -s -XDELETE 'localhost:8010/api/v1/devices/ExponentPushToken%5Bdemo-123%5D'
 | `SIDE_PUSH_RECEIPT_INTERVAL` | `60` | seconds between receipt checks (`0` disables) |
 | `SIDE_PUSH_RECEIPT_MIN_AGE` | `900` | only check tickets at least this old (Expo recommends ~15 min) |
 | `SIDE_DEEP_LINK_BASE` | `side://runs/` | |
-| `SIDE_CORS_ORIGINS` | `*` | comma-separated |
+| `SIDE_CORS_ORIGINS` | unset (CORS off) | comma-separated origins; native apps don't need CORS |
 | `SIDE_LOG_LEVEL` | `INFO` | |
 
 ## Tests

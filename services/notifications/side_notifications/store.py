@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import time
+import uuid
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -75,14 +76,26 @@ class Store:
 
     def __init__(self, path: str):
         self.path = path
-        if path != ":memory:":
+        self._uri = False
+        self._keeper: sqlite3.Connection | None = None
+        if path == ":memory:":
+            # A plain :memory: db is per-connection; share one and keep it alive.
+            self.path = f"file:side-notify-{uuid.uuid4().hex}?mode=memory&cache=shared"
+            self._uri = True
+            self._keeper = sqlite3.connect(self.path, uri=True, check_same_thread=False)
+        else:
             os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         with self._conn() as conn:
             conn.executescript(SCHEMA)
 
+    def close(self) -> None:
+        if self._keeper is not None:
+            self._keeper.close()
+            self._keeper = None
+
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.path, timeout=10)
+        conn = sqlite3.connect(self.path, timeout=10, uri=self._uri)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         try:
@@ -168,7 +181,24 @@ class Store:
             )
         return cur.rowcount > 0
 
+    def unmark_notified(self, run_id: str, status: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "DELETE FROM notified_runs WHERE run_id = ? AND status = ?", (run_id, status)
+            )
+
     # deliveries --------------------------------------------------------------
+
+    def delivered_tokens(self, run_id: str, status: str) -> set[str]:
+        """Tokens already handed to Expo (or logged in dry run) for this run status."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT DISTINCT token FROM deliveries
+                   WHERE run_id = ? AND status = ?
+                     AND NOT (state = 'error' AND error = 'RequestFailed')""",
+                (run_id, status),
+            ).fetchall()
+        return {r["token"] for r in rows}
 
     def add_delivery(
         self,

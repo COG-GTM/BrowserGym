@@ -219,3 +219,53 @@ def test_backoff_exponential_and_capped():
     assert [client._backoff(i, None) for i in range(4)] == [0.5, 1.0, 2.0, 3]
     assert client._backoff(0, "2") == 2.0
     assert client._backoff(0, "60") == 3
+
+
+@respx.mock
+def test_any_5xx_is_retried(live_client):
+    route = respx.post(PUSH_URL).mock(side_effect=[httpx.Response(520, text="?"), ok_tickets])
+    register(live_client, token(1))
+    live_client.post("/internal/run-events", json=status_event("r1"))
+    assert route.call_count == 2
+
+
+@respx.mock
+def test_request_failure_allows_retry_without_double_send(make_client):
+    client = make_client(dry_run=False, max_retries=0)
+    for i in range(150):
+        register(client, token(i))
+    # first batch (100) accepted, second batch (50) fails -> claim released
+    route = respx.post(PUSH_URL).mock(side_effect=[ok_tickets, httpx.Response(503, text="down")])
+    first = client.post("/internal/run-events", json=status_event("r1"))
+    assert first.json()["recipients"] == 150
+
+    route.side_effect = [ok_tickets]
+    retry = client.post("/internal/run-events", json=status_event("r1"))
+    assert retry.json() == {"accepted": True, "action": "queued", "recipients": 50, "reason": None}
+    resent = {m["to"] for m in json.loads(route.calls[-1].request.content)}
+    assert resent == {token(i) for i in range(100, 150)}
+
+    # fully delivered now -> further copies are duplicates
+    assert client.post("/internal/run-events", json=status_event("r1")).json()["action"] == (
+        "duplicate"
+    )
+
+
+@respx.mock
+def test_failed_receipt_request_does_not_expire_old_tickets(live_client):
+    respx.post(PUSH_URL).mock(side_effect=ok_tickets)
+    register(live_client, token(1))
+    live_client.post("/internal/run-events", json=status_event("r1"))
+    store = live_client.app.state.store
+    with store._conn() as conn:  # age the ticket past Expo's 24h receipt window
+        conn.execute("UPDATE deliveries SET created_at = created_at - 90000")
+
+    respx.post(RECEIPTS_URL).mock(return_value=httpx.Response(503, text="down"))
+    summary = live_client.post("/internal/receipts/check", params={"min_age_s": 0}).json()
+    assert (summary["expired"], summary["pending"]) == (0, 1)
+    assert store.deliveries("r1")[0].state == "pending"
+
+    respx.post(RECEIPTS_URL).mock(return_value=httpx.Response(200, json={"data": {}}))
+    summary = live_client.post("/internal/receipts/check", params={"min_age_s": 0}).json()
+    assert summary["expired"] == 1
+    assert store.deliveries("r1")[0].state == "expired"

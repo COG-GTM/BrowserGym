@@ -44,11 +44,34 @@ class Notifier:
         self.expo = expo
 
     async def deliver(self, run_id: str, status: str, tokens: Sequence[str]) -> dict[str, int]:
-        """Push a terminal-status notification to `tokens`. Returns a small summary."""
-        summary = {"sent": 0, "errors": 0, "pruned": 0, "dry_run": 0}
+        """Push a terminal-status notification to `tokens`. Returns a small summary.
+
+        The caller holds the (run_id, status) claim from `Store.mark_notified`. If any message
+        could not be handed to Expo (request failure or crash), the claim is released so a
+        re-sent event retries; tokens that already got a ticket are skipped on retry.
+        """
+        summary = {"sent": 0, "errors": 0, "pruned": 0, "dry_run": 0, "failed": 0}
+        try:
+            await self._deliver(run_id, status, tokens, summary)
+        except Exception:
+            logger.exception("run %s %s: delivery crashed", run_id, status)
+            summary["failed"] = max(summary["failed"], 1)
+        if summary["failed"]:
+            self.store.unmark_notified(run_id, status)
+            logger.warning(
+                "run %s %s: %d message(s) not accepted by Expo; event can be retried",
+                run_id,
+                status,
+                summary["failed"],
+            )
+        return summary
+
+    async def _deliver(
+        self, run_id: str, status: str, tokens: Sequence[str], summary: dict[str, int]
+    ) -> None:
         if not tokens:
             logger.info("run %s %s: no subscribed devices", run_id, status)
-            return summary
+            return
         messages = [build_message(t, run_id, status, self.settings.deep_link_base) for t in tokens]
 
         if self.settings.dry_run or self.expo is None:
@@ -61,7 +84,7 @@ class Notifier:
             for t in tokens:
                 self.store.add_delivery(run_id, status, t, state="dry_run")
             summary["dry_run"] = len(tokens)
-            return summary
+            return
 
         tickets = await self.expo.send(messages)
         dead: list[str] = []
@@ -81,13 +104,14 @@ class Notifier:
                     message=ticket.message,
                 )
                 summary["errors"] += 1
+                if ticket.error == "RequestFailed":
+                    summary["failed"] += 1
                 if ticket.error == "DeviceNotRegistered":
                     dead.append(ticket.token)
         if dead:
             summary["pruned"] = self.store.delete_devices(dead)
             logger.info("pruned %d unregistered device(s)", summary["pruned"])
         logger.info("run %s %s: push summary %s", run_id, status, summary)
-        return summary
 
     async def check_receipts(self, min_age_s: float | None = None) -> dict[str, int]:
         """Resolve pending tickets via the Expo receipts API and prune dead tokens."""
@@ -99,14 +123,14 @@ class Notifier:
         pending = self.store.pending_tickets(min_age_s)
         if not pending:
             return summary
-        receipts = await self.expo.get_receipts([tid for tid, _, _ in pending])
+        receipts, queried = await self.expo.get_receipts([tid for tid, _, _ in pending])
         now = time.time()
         dead: list[str] = []
         for ticket_id, token, created_at in pending:
             summary["checked"] += 1
             receipt = receipts.get(ticket_id)
             if receipt is None:
-                if now - created_at > RECEIPT_TTL_S:
+                if ticket_id in queried and now - created_at > RECEIPT_TTL_S:
                     self.store.resolve_ticket(ticket_id, "expired")
                     summary["expired"] += 1
                 else:

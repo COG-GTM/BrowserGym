@@ -57,6 +57,12 @@ def create_app(
         receipt_task = None
         if not settings.dry_run and settings.receipt_interval_s > 0:
             receipt_task = asyncio.create_task(_receipt_loop(notifier, settings.receipt_interval_s))
+        if not settings.internal_secret:
+            logger.warning(
+                "SIDE_NOTIFY_SECRET is not set: /internal/* is unauthenticated. "
+                "Set it (and have the API send %s) unless this port is private.",
+                SECRET_HEADER,
+            )
         logger.info(
             "side-notifications ready (db=%s, dry_run=%s, internal_secret=%s)",
             settings.db_path,
@@ -72,6 +78,7 @@ def create_app(
                     await receipt_task
             if owns_client:
                 await client.aclose()
+            store.close()
 
     app = FastAPI(title="Side notifications", version=__version__, lifespan=lifespan)
     app.state.settings = settings
@@ -133,7 +140,8 @@ def create_app(
             return RunEventAck(action="ignored", reason=f"non-terminal status {event.status}")
         if not store.mark_notified(event.run_id, event.status):
             return RunEventAck(action="duplicate", reason="already notified")
-        tokens = store.subscribers(event.run_id)
+        done = store.delivered_tokens(event.run_id, event.status)
+        tokens = [t for t in store.subscribers(event.run_id) if t not in done]
         background.add_task(notifier.deliver, event.run_id, event.status, tokens)
         return RunEventAck(action="queued", recipients=len(tokens))
 
