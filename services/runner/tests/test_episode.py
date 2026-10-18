@@ -13,7 +13,7 @@ from PIL import Image
 
 from side_runner.agents import _REGISTRY
 from side_runner.agents.openai_agent import OpenAIAgent
-from side_runner.runner import RunConfig, run_episode
+from side_runner.runner import EpisodeRunner, RunConfig, run_episode
 
 from conftest import SITE_DIR, read_jsonl, validate_run_dir
 
@@ -289,3 +289,59 @@ def test_cli_rejects_path_like_run_id(tmp_path):
     )
     assert proc.returncode == 2 and "invalid run id" in proc.stderr
     assert not (tmp_path / "evil").exists() and not (tmp_path.parent / "evil").exists()
+
+
+@pytest.mark.parametrize(
+    "agent,max_steps,cancel,expected",
+    [
+        ({"type": "scripted", "actions": ["noop(300)"] * 3}, 10, False, "succeeded"),
+        ({"type": "mock"}, 3, False, "succeeded"),  # max-steps truncation
+        ({"type": "mock", "fail_at_step": 3}, 10, False, "failed"),
+        ({"type": "mock", "delay_ms": 100}, 50, True, "cancelled"),
+    ],
+    ids=["success", "max-steps", "failure", "cancel"],
+)
+def test_inbox_flood_reaches_chat_on_every_exit_path(
+    tmp_path, site_url, monkeypatch, agent, max_steps, cancel, expected
+):
+    """A chat message every 50 ms: nothing written before the runner finishes may be lost."""
+    run_dir = tmp_path / "runs" / "r1"
+    run_dir.mkdir(parents=True)
+    inbox = run_dir / "inbox.jsonl"
+    lock, finishing, written = threading.Lock(), threading.Event(), []
+
+    original_flush = EpisodeRunner._flush_inbox
+
+    def flush(self):
+        with lock:  # every message appended before the final inbox read must survive
+            finishing.set()
+        original_flush(self)
+
+    monkeypatch.setattr(EpisodeRunner, "_flush_inbox", flush)
+
+    def flood():
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            with lock:
+                if finishing.is_set():
+                    return
+                msg = f"flood-{len(written)}"
+                with open(inbox, "a") as f:
+                    f.write(json.dumps({"role": "user", "message": msg}) + "\n")
+                written.append(msg)
+            if cancel and (run_dir / "steps" / "2.json").exists():
+                (run_dir / "CANCEL").touch()
+            time.sleep(0.05)
+
+    t = threading.Thread(target=flood)
+    t.start()
+    status = run_episode(_cfg(tmp_path, site_url, agent=agent, max_steps=max_steps))
+    t.join()
+    assert status == expected
+    art = validate_run_dir(run_dir)
+    chat_users = [
+        m["message"]
+        for m in art["chat"]
+        if m["role"] == "user" and m["message"].startswith("flood-")
+    ]
+    assert len(written) >= 5 and chat_users == written

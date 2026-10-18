@@ -122,14 +122,28 @@ class EpisodeRunner:
     def _on_signal(self, signum, frame) -> None:
         self._signal_cancel = True
 
-    def _drain_inbox(self) -> None:
+    def _new_inbox_texts(self) -> list[str]:
+        texts = []
         for msg in self.store.read_new_inbox():
             text = msg.get("message") if isinstance(msg, dict) else None
             if not isinstance(text, str) or not text or msg.get("role", "user") != "user":
                 self._log(f"ignoring invalid inbox line: {msg!r}")
                 continue
+            texts.append(text)
+        return texts
+
+    def _drain_inbox(self) -> None:
+        for text in self._new_inbox_texts():
             self.env.unwrapped.chat.add_message(role="user", msg=text)
         self._sync_chat()
+
+    def _flush_inbox(self) -> None:
+        """Copy inbox lines that arrived after the last step to chat.jsonl before finishing."""
+        try:
+            for text in self._new_inbox_texts():
+                self._chat("user", text)
+        except Exception:  # noqa: BLE001 - must not prevent the terminal status write
+            logger.warning("error while flushing the inbox", exc_info=True)
 
     # steps
     def _record_step(self, index, obs, action, thought, reward, terminated, truncated, elapsed_ms):
@@ -245,6 +259,7 @@ class EpisodeRunner:
             for sig, handler in previous_handlers.items():
                 signal.signal(sig, handler)
 
+        self._flush_inbox()
         if status == "cancelled":
             self._chat("info", "Run cancelled.")
         elif status == "failed":
