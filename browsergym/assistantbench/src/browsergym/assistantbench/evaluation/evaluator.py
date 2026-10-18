@@ -13,7 +13,7 @@ def find_isnan(samp):
             return True
         else:
             return False
-    except:
+    except (TypeError, ValueError):
         return False
 
 
@@ -27,7 +27,7 @@ def fix_ans(answer):
         )
         answer = answer.replace("': ", '": ')
         return answer
-    except:
+    except (AttributeError, TypeError):
         return answer
 
 
@@ -39,7 +39,7 @@ def parse_answer(answer):
         try:
             ans = json.loads(fix_ans(answer[0]))
             return [ans], "json"
-        except:
+        except (ValueError, TypeError, RecursionError):
             ans, is_num = fix_number(answer[0])
             if is_num:
                 return ans, "number"
@@ -49,7 +49,7 @@ def parse_answer(answer):
         try:
             ans = [json.loads(fix_ans(ex)) for ex in answer]
             return ans, "json"
-        except:
+        except (ValueError, TypeError, RecursionError):
             return answer, "string list"
 
 
@@ -63,7 +63,7 @@ def fix_number(number):
         copy_ans = copy_ans.replace(",", ".").replace(" square kilometers", "")
         try:
             return float(copy_ans), True
-        except:
+        except (ValueError, TypeError):
             return number, False
     elif type(number) == int:
         return float(number), True
@@ -87,7 +87,7 @@ def fix_prediction(prediction, gold_answer, evaluator):
         if evaluator == "json":
             try:
                 prediction = [json.loads(pred) for pred in prediction.split("\n")]
-            except:
+            except (ValueError, TypeError, AttributeError, RecursionError):
                 prediction = [prediction]
 
     if (hasattr(type(prediction), "__len__")) and (len(prediction) == 0):
@@ -102,7 +102,7 @@ def fix_prediction(prediction, gold_answer, evaluator):
 def question_scorer(prediction, gold_answer):
     try:
         prediction = json.loads(prediction)
-    except:
+    except (ValueError, TypeError, RecursionError):
         prediction = prediction
 
     answer_list = (
