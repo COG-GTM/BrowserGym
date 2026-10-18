@@ -8,7 +8,7 @@ import numpy as np
 import PIL.Image
 import PIL.ImageDraw
 import PIL.ImageFont
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 
 from browsergym.core.constants import BROWSERGYM_ID_ATTRIBUTE as BID_ATTR
 from browsergym.core.constants import BROWSERGYM_SETOFMARKS_ATTRIBUTE as SOM_ATTR
@@ -45,6 +45,43 @@ def flatten_dom_to_str(
     hide_all_bids: bool = False,
 ) -> str:
     """Formats a DOM snapshot into a string text"""
+    return flatten_dom_to_soup(
+        dom_snapshot,
+        extra_properties=extra_properties,
+        with_visible=with_visible,
+        with_clickable=with_clickable,
+        with_center_coords=with_center_coords,
+        with_bounding_box_coords=with_bounding_box_coords,
+        with_som=with_som,
+        filter_visible_only=filter_visible_only,
+        filter_with_bid_only=filter_with_bid_only,
+        filter_som_only=filter_som_only,
+        coord_decimals=coord_decimals,
+        hide_bid_if_invisible=hide_bid_if_invisible,
+        hide_all_bids=hide_all_bids,
+    ).prettify()
+
+
+def flatten_dom_to_soup(
+    dom_snapshot,
+    extra_properties: dict = None,
+    with_visible: bool = False,
+    with_clickable: bool = False,
+    with_center_coords: bool = False,
+    with_bounding_box_coords: bool = False,
+    with_som: bool = False,
+    filter_visible_only: bool = False,
+    filter_with_bid_only: bool = False,
+    filter_som_only: bool = False,
+    coord_decimals: int = 0,
+    hide_bid_if_invisible: int = False,
+    hide_all_bids: bool = False,
+) -> BeautifulSoup:
+    """Formats a DOM snapshot into a parsed HTML document (BeautifulSoup, lxml parser).
+
+    `flatten_dom_to_str()` is `flatten_dom_to_soup().prettify()`. Use this directly to
+    serialize and prune the same parsed tree (see `flatten_and_prune_dom()`) instead of
+    re-parsing the serialized HTML string."""
 
     def to_string(idx):
         if idx == -1:
@@ -52,7 +89,7 @@ def flatten_dom_to_str(
         else:
             return dom_snapshot["strings"][idx]
 
-    def parse_document(document_idx) -> str:
+    def parse_document(document_idx) -> BeautifulSoup:
         # adapted from [natbot](https://github.com/nat/natbot)
 
         nodes = dom_snapshot["documents"][document_idx]["nodes"]
@@ -63,7 +100,14 @@ def flatten_dom_to_str(
             if parent_idx != -1:
                 node_children[parent_idx].append(node_idx)
 
-        def dfs(node_idx: int, parent_node_skipped: bool) -> str:
+        # iframe node -> content document index
+        content_documents = dict(
+            zip(nodes["contentDocumentIndex"]["index"], nodes["contentDocumentIndex"]["value"])
+        )
+
+        html_parts = []
+
+        def dfs(node_idx: int, parent_node_skipped: bool):
 
             # https://developer.mozilla.org/en-US/docs/Web/API/Node/nodeType
             # https://developer.mozilla.org/en-US/docs/Web/API/Node/nodeName
@@ -153,35 +197,25 @@ def flatten_dom_to_str(
                     # print node closing tag
                     html_after += f"</{tag_name}>"
 
-            html = ""
-            html += html_before
+            html_parts.append(html_before)
 
             # recursively print iframe nodes if any
-            if node_idx in nodes["contentDocumentIndex"]["index"]:
-                sub_document_idx = nodes["contentDocumentIndex"]["value"][
-                    nodes["contentDocumentIndex"]["index"].index(node_idx)
-                ]
-                html += parse_document(document_idx=sub_document_idx)
+            if node_idx in content_documents:
+                html_parts.append(
+                    parse_document(document_idx=content_documents[node_idx]).prettify()
+                )
 
             # recursively print children nodes if any
             for child_idx in node_children[node_idx]:
-                html += dfs(node_idx=child_idx, parent_node_skipped=skip_node)
+                dfs(node_idx=child_idx, parent_node_skipped=skip_node)
 
-            html += html_after
+            html_parts.append(html_after)
 
-            return html
+        dfs(node_idx=0, parent_node_skipped=False)
 
-        html = dfs(node_idx=0, parent_node_skipped=False)
+        return BeautifulSoup("".join(html_parts), "lxml")
 
-        # Format the HTML document with indentation
-        soup = BeautifulSoup(html, "lxml")
-        html = soup.prettify()
-
-        return html
-
-    html = parse_document(document_idx=0)
-
-    return html
+    return parse_document(document_idx=0)
 
 
 def _get_coord_str(coord, decimals):
@@ -529,12 +563,30 @@ def overlay_som(
     return img
 
 
-def prune_html(html):
-    html = re.sub(r"\n", " ", html)
-    # remove html comments
-    html = re.sub(r"<!--(.*?)-->", "", html, flags=re.MULTILINE)
+def prune_html(html: str | BeautifulSoup) -> str:
+    """Prunes an HTML document (removes scripts, styles, comments, structural tags...).
 
-    soup = BeautifulSoup(html, "lxml")
+    `html` is either an HTML string, or a BeautifulSoup document such as the one returned by
+    `flatten_dom_to_soup()`, which is pruned in place without being re-parsed."""
+    if isinstance(html, BeautifulSoup):
+        soup = html
+        # same normalization as the regexes below, applied to the parsed tree
+        for node in soup.find_all(string=True):
+            if isinstance(node, Comment):
+                node.extract()
+            elif "\n" in node:
+                node.replace_with(type(node)(node.replace("\n", " ")))
+        for tag in soup.find_all():
+            for attr_name, attr_value in tag.attrs.items():
+                if isinstance(attr_value, str) and "\n" in attr_value:
+                    tag[attr_name] = attr_value.replace("\n", " ")
+    else:
+        html = re.sub(r"\n", " ", html)
+        # remove html comments
+        html = re.sub(r"<!--(.*?)-->", "", html, flags=re.MULTILINE)
+
+        soup = BeautifulSoup(html, "lxml")
+
     for tag in reversed(soup.find_all()):
         # remove body and html tags (not their content)
         if tag.name in ("html", "body"):
@@ -552,3 +604,12 @@ def prune_html(html):
     html = soup.prettify()
 
     return html
+
+
+def flatten_and_prune_dom(dom_snapshot, **kwargs) -> tuple[str, str]:
+    """Returns `(flatten_dom_to_str(dom_snapshot, **kwargs), prune_html(<that string>))`, while
+    parsing the flattened DOM only once."""
+    soup = flatten_dom_to_soup(dom_snapshot, **kwargs)
+    dom_txt = soup.prettify()
+    pruned_html = prune_html(soup)
+    return dom_txt, pruned_html

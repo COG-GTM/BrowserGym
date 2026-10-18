@@ -19,7 +19,13 @@ from browsergym.core.observation import (
     extract_merged_axtree,
     extract_screenshot,
 )
-from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_str
+from browsergym.utils.obs import (
+    flatten_and_prune_dom,
+    flatten_axtree_to_str,
+    flatten_dom_to_soup,
+    flatten_dom_to_str,
+    prune_html,
+)
 
 __SLOW_MO = 1000 if "DISPLAY_BROWSER" in os.environ else None
 __HEADLESS = False if "DISPLAY_BROWSER" in os.environ else True
@@ -39,6 +45,77 @@ INNER_IFRAME_URL = f"file://{__DATA_DIR}/basic_shadow_iframe_site/inner-iframe.h
 OUTER_IFRAME_URL = f"file://{__DATA_DIR}/basic_shadow_iframe_site/outer-iframe.html"
 CUSTOM_PAGE_URL = f"file://{__DATA_DIR}/custom_page/basic_iframe.html"
 MULTI_IFRAME_URL = f"file://{__DATA_DIR}/basic_iframe_site/basic_iframe_2.html"
+
+
+def _make_dom_snapshot():
+    strings = []
+
+    def sid(value):
+        if value is None:
+            return -1
+        if value not in strings:
+            strings.append(value)
+        return strings.index(value)
+
+    def make_document(nodes_spec):
+        nodes = {
+            key: [] for key in ("parentIndex", "nodeType", "nodeName", "nodeValue", "attributes")
+        }
+        nodes["contentDocumentIndex"] = {"index": [], "value": []}
+        for parent, node_type, name, value, attributes, content_document in nodes_spec:
+            if content_document is not None:
+                nodes["contentDocumentIndex"]["index"].append(len(nodes["parentIndex"]))
+                nodes["contentDocumentIndex"]["value"].append(content_document)
+            nodes["parentIndex"].append(parent)
+            nodes["nodeType"].append(node_type)
+            nodes["nodeName"].append(sid(name))
+            nodes["nodeValue"].append(sid(value))
+            nodes["attributes"].append([sid(x) for attr in attributes for x in attr])
+        return {"nodes": nodes}
+
+    # (parent, nodeType, nodeName, nodeValue, attributes, content document)
+    main_document = [
+        (-1, 9, "#document", None, [], None),
+        (0, 1, "HTML", None, [(BID_ATTR, "a")], None),
+        (1, 1, "BODY", None, [(BID_ATTR, "b")], None),
+        (2, 1, "DIV", None, [(BID_ATTR, "c")], None),
+        (3, 3, "#text", "multi\nline  text", [], None),
+        (3, 1, "SPAN", None, [(BID_ATTR, "d"), ("title", "multi\nline")], None),
+        (5, 3, "#text", "a < b & c", [], None),
+        (2, 8, "#comment", "comment", [], None),
+        (2, 1, "SCRIPT", None, [(BID_ATTR, "e")], None),
+        (8, 3, "#text", "var x = 1;", [], None),
+        (2, 1, "P", None, [(BID_ATTR, "f")], None),
+        (2, 1, "IFRAME", None, [(BID_ATTR, "g")], 1),
+        (2, 1, "BUTTON", None, [(BID_ATTR, "h")], None),
+        (12, 3, "#text", "Submit", [], None),
+    ]
+    iframe_document = [
+        (-1, 9, "#document", None, [], None),
+        (0, 1, "HTML", None, [(BID_ATTR, "g0")], None),
+        (1, 1, "BODY", None, [(BID_ATTR, "g1")], None),
+        (2, 1, "INPUT", None, [(BID_ATTR, "g2"), ("value", "x")], None),
+        (2, 1, "STYLE", None, [], None),
+        (2, 1, "BR", None, [], None),
+    ]
+    documents = [make_document(main_document), make_document(iframe_document)]
+    return {"documents": documents, "strings": strings}
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"hide_all_bids": True}])
+def test_flatten_and_prune_dom(kwargs):
+    dom_snapshot = _make_dom_snapshot()
+
+    dom = flatten_dom_to_str(dom_snapshot, **kwargs)
+    pruned = prune_html(dom)
+    assert flatten_dom_to_soup(dom_snapshot, **kwargs).prettify() == dom
+    assert prune_html(flatten_dom_to_soup(dom_snapshot, **kwargs)) == pruned
+    assert flatten_and_prune_dom(dom_snapshot, **kwargs) == (dom, pruned)
+
+    assert "Submit" in dom and "Submit" in pruned
+    assert 'value="x"' in dom and 'value="x"' in pruned
+    assert "var x = 1;" in dom and "var x = 1;" not in pruned
+    assert "multi line" in pruned and "multi\nline" not in pruned
 
 
 @pytest.mark.skip(reason="TODO: how to get the final viewport size right?")
@@ -360,6 +437,11 @@ page.get_by_label("Age:", exact=True).press("Tab")
     dom = flatten_dom_to_str(obs["dom_object"])
     assert "Janice" in dom
     assert "janice@mail.com" in dom
+
+    # single-parse flatten + prune matches the two-step string pipeline
+    dom_txt, pruned_html = flatten_and_prune_dom(obs["dom_object"])
+    assert dom_txt == dom
+    assert pruned_html == prune_html(dom)
 
     dom = flatten_dom_to_str(
         obs["dom_object"],

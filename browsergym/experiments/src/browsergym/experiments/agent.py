@@ -4,15 +4,14 @@ from typing import Any
 
 from browsergym.core.action.base import AbstractActionSet
 from browsergym.core.action.highlevel import HighLevelActionSet
-from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_str, prune_html
+from browsergym.utils.obs import flatten_and_prune_dom, flatten_axtree_to_str
 
 
 def default_obs_preprocessor(obs: dict) -> dict:
     obs = obs.copy()  # shallow copy to avoid modifying the original dict
     # augment the observation with text versions of the DOM and AXTree
-    obs["dom_txt"] = flatten_dom_to_str(obs["dom_object"])
+    obs["dom_txt"], obs["pruned_html"] = flatten_and_prune_dom(obs["dom_object"])
     obs["axtree_txt"] = flatten_axtree_to_str(obs["axtree_object"])
-    obs["pruned_html"] = prune_html(obs["dom_txt"])
     # remove raw entries that the agent won't use, and we don't want to record
     del obs["dom_object"]
     del obs["axtree_object"]
