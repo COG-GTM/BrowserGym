@@ -162,4 +162,17 @@ describe("RunReplayPlayer", () => {
     await act(async () => {});
     expect(screen.queryByText(/Loading/)).not.toBeInTheDocument();
   });
+
+  it("retries a missing detail when the live step is updated", async () => {
+    const base = { ...(step0 as StepDetail), axtree_txt: null } as StepDetail;
+    let ready = false;
+    const load = vi.fn(() => (ready ? { ...base, axtree_txt: "RootWebArea 'Ready'" } : undefined));
+    const { rerender } = render(<RunReplayPlayer run={flightRun} steps={[base]} getStepDetail={load} />);
+    await act(async () => {});
+    expect(screen.queryByText(/Loading/)).not.toBeInTheDocument();
+    ready = true;
+    rerender(<RunReplayPlayer run={flightRun} steps={[{ ...base }]} getStepDetail={load} />);
+    expect(await screen.findByText("'Ready'")).toBeInTheDocument();
+    expect(load).toHaveBeenCalledTimes(2);
+  });
 });
