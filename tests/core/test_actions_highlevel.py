@@ -1565,7 +1565,9 @@ def test_to_tool_description_annotations():
     }
 
 
-def _unresolvable_custom_action(count: "int", other: "NotAType" = "x"):
+def _unresolvable_custom_action(
+    count: "int", other: "NotAType" = "x", expr: "__import__('os').getcwd()" = "y"
+):
     """
     Custom action with an annotation that cannot be resolved.
 
@@ -1579,12 +1581,14 @@ def test_to_tool_description_unresolvable_annotation():
     action_set = HighLevelActionSet(
         subsets=["custom"], custom_actions=[_unresolvable_custom_action]
     )
-    # unresolved string annotations fall back to string
+    # plain names still resolve, unresolved annotations fall back to string
     assert action_set.to_tool_description()[1]["parameters"] == {
         "type": "object",
         "properties": {
-            "count": {"type": "string"},
+            "count": {"type": "integer"},
             "other": {"type": "string", "default": "x"},
+            # expressions are never evaluated
+            "expr": {"type": "string", "default": "y"},
         },
         "required": ["count"],
     }

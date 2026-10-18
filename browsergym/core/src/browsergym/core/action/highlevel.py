@@ -1,3 +1,4 @@
+import builtins
 import copy
 import inspect
 import random
@@ -316,6 +317,10 @@ def _function_to_json_schema(func: callable) -> dict:
     parameters = {"type": "object", "properties": {}, "required": []}
     for param_name, param in inspect.signature(func).parameters.items():
         annotation = type_hints.get(param_name, param.annotation)
+        if isinstance(annotation, str) and annotation.isidentifier():
+            # get_type_hints failed on another parameter, resolve plain names by lookup only
+            namespace = getattr(func, "__globals__", {})
+            annotation = namespace.get(annotation, vars(builtins).get(annotation, annotation))
         parameters["properties"][param_name] = _annotation_to_json_schema(annotation)
         if param.default is inspect.Parameter.empty:
             parameters["required"].append(param_name)
