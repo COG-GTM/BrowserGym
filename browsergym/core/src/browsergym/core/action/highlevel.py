@@ -316,12 +316,6 @@ def _function_to_json_schema(func: callable) -> dict:
     parameters = {"type": "object", "properties": {}, "required": []}
     for param_name, param in inspect.signature(func).parameters.items():
         annotation = type_hints.get(param_name, param.annotation)
-        if isinstance(annotation, str):
-            # get_type_hints failed on another parameter, resolve this one on its own
-            try:
-                annotation = eval(annotation, getattr(func, "__globals__", {}))
-            except Exception:
-                annotation = inspect.Parameter.empty
         parameters["properties"][param_name] = _annotation_to_json_schema(annotation)
         if param.default is inspect.Parameter.empty:
             parameters["required"].append(param_name)

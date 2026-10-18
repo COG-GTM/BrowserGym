@@ -1538,7 +1538,6 @@ def _annotated_custom_action(
     count: "int",
     value: typing.Annotated[int, {"ge": 0}],
     mode: typing.Optional[typing.Literal["a", "b"]] = None,
-    unresolved: "NotAType" = "x",
 ):
     """
     Custom action with postponed, annotated and optional annotations.
@@ -1561,10 +1560,33 @@ def test_to_tool_description_annotations():
                 "anyOf": [{"type": "string", "enum": ["a", "b"]}, {"type": "null"}],
                 "default": None,
             },
-            # unresolvable annotation falls back to string
-            "unresolved": {"type": "string", "default": "x"},
         },
         "required": ["count", "value"],
+    }
+
+
+def _unresolvable_custom_action(count: "int", other: "NotAType" = "x"):
+    """
+    Custom action with an annotation that cannot be resolved.
+
+    Examples:
+        _unresolvable_custom_action(1)
+    """
+    pass
+
+
+def test_to_tool_description_unresolvable_annotation():
+    action_set = HighLevelActionSet(
+        subsets=["custom"], custom_actions=[_unresolvable_custom_action]
+    )
+    # unresolved string annotations fall back to string
+    assert action_set.to_tool_description()[1]["parameters"] == {
+        "type": "object",
+        "properties": {
+            "count": {"type": "string"},
+            "other": {"type": "string", "default": "x"},
+        },
+        "required": ["count"],
     }
 
 
