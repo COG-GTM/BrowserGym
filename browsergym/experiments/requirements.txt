@@ -1,4 +1,3 @@
 browsergym-core==0.14.3.dev1
 tiktoken>=0.8
 dataclasses-json>=0.6.7
-browsergym-workarena<0.5.2
