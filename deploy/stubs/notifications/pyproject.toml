@@ -1,0 +1,8 @@
+[project]
+name = "side-notifications-stub"
+version = "0.0.0"
+requires-python = ">=3.10"
+dependencies = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]
+
+[tool.setuptools]
+packages = ["side_notifications"]

@@ -1,0 +1,10 @@
+*
+!browsergym/
+!services/runner/
+!deploy/scripts/
+!deploy/stubs/runner/
+**/__pycache__
+**/*.egg-info
+**/.venv
+**/.pytest_cache
+**/node_modules

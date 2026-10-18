@@ -1,0 +1,14 @@
+*
+!browsergym/
+!apps/api/
+!services/runner/
+!deploy/scripts/
+!deploy/stubs/api/
+!deploy/stubs/runner/
+**/__pycache__
+**/*.egg-info
+**/.venv
+**/.pytest_cache
+**/node_modules
+**/*.db
+**/.side-data
