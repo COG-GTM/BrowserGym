@@ -47,7 +47,8 @@ RUN --mount=type=bind,target=/ctx \
 ENV PYTHONPATH=/opt/side/api:/opt/side/runner \
     SIDE_DATA_DIR=/data \
     PORT=8000
-RUN mkdir -p /data && chown pwuser:pwuser /data
+# notifications runs as the same UID/GID (1001) so the shared side-data volume is writable by all.
+RUN test "$(id -u pwuser):$(id -g pwuser)" = "1001:1001" && mkdir -p /data && chown 1001:1001 /data
 USER pwuser
 WORKDIR /data
 VOLUME ["/data"]

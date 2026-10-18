@@ -16,11 +16,11 @@ services:
     init: true
     shm_size: 1gb # chromium (runner subprocesses) needs more than the 64MB default /dev/shm
     ports:
-      - "${SIDE_API_PORT:-8000}:8000"
+      - "${SIDE_BIND_ADDR:-127.0.0.1}:${SIDE_API_PORT:-8000}:8000"
     environment:
       SIDE_DATA_DIR: /data
-      SIDE_NOTIFY_URL: ${SIDE_NOTIFY_URL:-http://notifications:8010}
-      SIDE_CORS_ORIGINS: ${SIDE_CORS_ORIGINS:-http://localhost:3000}
+      SIDE_NOTIFY_URL: ${SIDE_NOTIFY_URL-http://notifications:8010} # set empty to disable
+      SIDE_CORS_ORIGINS: ${SIDE_CORS_ORIGINS:-http://localhost:${SIDE_WEB_PORT:-3000}}
       SIDE_API_APP: ${SIDE_API_APP:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -44,7 +44,7 @@ services:
     image: ${SIDE_IMAGE_PREFIX:-side}-notifications:${SIDE_IMAGE_TAG:-local}
     init: true
     ports:
-      - "${SIDE_NOTIFICATIONS_PORT:-8010}:8010"
+      - "${SIDE_BIND_ADDR:-127.0.0.1}:${SIDE_NOTIFICATIONS_PORT:-8010}:8010"
     environment:
       SIDE_DATA_DIR: /data
       EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
@@ -64,12 +64,12 @@ services:
       context: *repo-root
       dockerfile: deploy/web/Dockerfile
       args:
-        NEXT_PUBLIC_SIDE_API_URL: ${NEXT_PUBLIC_SIDE_API_URL:-http://localhost:8000/api/v1}
+        NEXT_PUBLIC_SIDE_API_URL: ${NEXT_PUBLIC_SIDE_API_URL:-http://localhost:${SIDE_API_PORT:-8000}/api/v1}
         NEXT_PUBLIC_SIDE_MOCK: ${NEXT_PUBLIC_SIDE_MOCK:-0}
     image: ${SIDE_IMAGE_PREFIX:-side}-web:${SIDE_IMAGE_TAG:-local}
     init: true
     ports:
-      - "${SIDE_WEB_PORT:-3000}:3000"
+      - "${SIDE_BIND_ADDR:-127.0.0.1}:${SIDE_WEB_PORT:-3000}:3000"
     environment:
       # Server-side (SSR / route handlers) calls go over the compose network.
       SIDE_API_URL: ${SIDE_API_URL:-http://api:8000/api/v1}

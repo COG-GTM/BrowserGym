@@ -18,7 +18,10 @@ RUN --mount=type=bind,target=/ctx \
 ENV PYTHONPATH=/opt/side/notifications \
     SIDE_DATA_DIR=/data \
     PORT=8010
-RUN useradd --create-home --uid 1001 side && mkdir -p /data && chown side:side /data
+# UID/GID 1001 = pwuser in the Playwright-based api/runner images, so whichever container
+# initializes the shared side-data volume first, /data stays writable for all of them.
+RUN groupadd --gid 1001 side && useradd --create-home --uid 1001 --gid 1001 side \
+    && mkdir -p /data && chown 1001:1001 /data
 USER side
 WORKDIR /data
 EXPOSE 8010

@@ -40,7 +40,8 @@ def main():
 
     spec = os.environ.get(args.env_var) or resolve(args.candidates)
     print(f"side-deploy: serving {spec} on {args.host}:{args.port}", flush=True)
-    uvicorn.run(spec, host=args.host, port=args.port, proxy_headers=True, forwarded_allow_ips="*")
+    # Forwarded headers are trusted only from FORWARDED_ALLOW_IPS (uvicorn default 127.0.0.1).
+    uvicorn.run(spec, host=args.host, port=args.port, proxy_headers=True)
 
 
 if __name__ == "__main__":

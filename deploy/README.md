@@ -46,15 +46,17 @@ Tear down (add `-v` to also delete run artifacts): `docker compose -f deploy/doc
 | Variable | Used by | Default | Notes |
 |---|---|---|---|
 | `SIDE_DATA_DIR` | api, runner, notifications | `/data` | Shared named volume `side-data` (artifact layout in ARCHITECTURE.md). Not meant to be overridden in compose. |
-| `SIDE_NOTIFY_URL` | api | `http://notifications:8010` | API POSTs `status` RunEvents to `${SIDE_NOTIFY_URL}/internal/run-events`. Empty = disabled. |
-| `SIDE_CORS_ORIGINS` | api | `http://localhost:3000` | Browser origins allowed to call the API (if apps/api supports it). |
+| `SIDE_NOTIFY_URL` | api | `http://notifications:8010` | API POSTs `status` RunEvents to `${SIDE_NOTIFY_URL}/internal/run-events`. Set to an empty value to disable. |
+| `SIDE_CORS_ORIGINS` | api | `http://localhost:${SIDE_WEB_PORT}` | Browser origins allowed to call the API (if apps/api supports it). |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | api, runner | empty | Only for `openai` / `anthropic` agents. |
 | `MINIWOB_URL` | api, runner | baked in | MiniWoB++ HTML is bundled at `/opt/miniwob-plusplus` (same pinned commit as `make setup-miniwob`), so `browsergym/miniwob.*` tasks run offline. |
 | `EXPO_ACCESS_TOKEN` | notifications | empty | Expo push access token (optional). |
-| `NEXT_PUBLIC_SIDE_API_URL` | web (build arg) | `http://localhost:8000/api/v1` | Browser-side API base URL. Inlined at build time: rebuild `web` after changing. |
+| `NEXT_PUBLIC_SIDE_API_URL` | web (build arg) | `http://localhost:${SIDE_API_PORT}/api/v1` | Browser-side API base URL. Inlined at build time: rebuild `web` after changing. |
 | `NEXT_PUBLIC_SIDE_MOCK` | web (build arg) | `0` | `1` = fixtures only, no backend. |
 | `SIDE_API_URL` | web (runtime) | `http://api:8000/api/v1` | Server-side (SSR / route handlers) API base URL inside the compose network. |
-| `SIDE_API_PORT` / `SIDE_NOTIFICATIONS_PORT` / `SIDE_WEB_PORT` | compose | `8000` / `8010` / `3000` | Host ports. |
+| `SIDE_API_PORT` / `SIDE_NOTIFICATIONS_PORT` / `SIDE_WEB_PORT` | compose | `8000` / `8010` / `3000` | Host ports. The browser API URL and CORS origin defaults follow them. |
+| `SIDE_BIND_ADDR` | compose | `127.0.0.1` | Host address the ports are published on. Use `0.0.0.0` to expose the stack to the network (there's no auth). |
+| `FORWARDED_ALLOW_IPS` | api, notifications | `127.0.0.1` | uvicorn: proxies trusted for `X-Forwarded-*` headers. |
 | `SIDE_IMAGE_PREFIX` / `SIDE_IMAGE_TAG` | compose | `side` / `local` | Image names `<prefix>-<service>:<tag>`. |
 | `SIDE_API_APP` / `SIDE_NOTIFICATIONS_APP` | api / notifications | auto | Override the ASGI app (`module:attr`). By default `deploy/scripts/serve.py` picks the first importable of `side_api.main:app`, `side_api.app:app`, `api.main:app`, `app.main:app`, `main:app` (notifications: `side_notifications.*`, `notifications.main:app`, ...). |
 
@@ -90,5 +92,5 @@ Tear down (add `-v` to also delete run artifacts): `docker compose -f deploy/doc
 
 - Chromium needs a bigger `/dev/shm`: compose sets `shm_size: 1gb` on `api` and `runner`
   (use `--shm-size=1g` with plain `docker run`).
-- Containers run as non-root (`pwuser` in the Playwright images, `side` / `node` elsewhere).
+- Containers run as non-root. api/runner (`pwuser`) and notifications (`side`) share UID/GID 1001, so the `side-data` volume stays writable whichever container initializes it first. The build fails if the Playwright base ever changes `pwuser`'s UID.
 - The Playwright images are large (~1.2 GB compressed) because the base ships all browsers.

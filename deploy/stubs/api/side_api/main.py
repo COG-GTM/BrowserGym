@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -12,6 +13,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 DATA_DIR = Path(os.environ.get("SIDE_DATA_DIR", "./.side-data"))
+RUN_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 app = FastAPI(title="Side API (deploy stub)")
 
 
@@ -66,12 +68,18 @@ def create_run(body: RunCreate):
     ]
     if body.goal:
         cmd += ["--goal", body.goal]
+    if body.start_url:
+        cmd += ["--start-url", body.start_url]
+    if not body.headless:
+        cmd.append("--no-headless")
     subprocess.run(cmd, check=True, timeout=120)
     return get_run(run_id)
 
 
 @app.get("/api/v1/runs/{run_id}")
 def get_run(run_id: str):
+    if not RUN_ID_RE.fullmatch(run_id):
+        raise HTTPException(404, "run not found")
     path = DATA_DIR / "runs" / run_id / "run.json"
     if not path.exists():
         raise HTTPException(404, "run not found")
