@@ -25,7 +25,7 @@ Make targets use `uv run` when uv is installed; pass `RUN=` to use the active en
 (e.g. `make test-core RUN=`).
 
 After changing dependencies in any `browsergym/*/requirements.txt`, run `uv lock` and commit
-`uv.lock` (it is listed in `.gitignore`, so stage it with `git add -f uv.lock` the first time).
+`uv.lock`.
 
 ## Dev setup (pip)
 
