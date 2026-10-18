@@ -1,5 +1,7 @@
+import copy
 import inspect
 import random
+import types
 import typing
 from dataclasses import dataclass
 
@@ -249,6 +251,69 @@ ACTION_SUBSETS = {
 }
 
 
+_JSON_SCHEMA_TYPES = {
+    str: "string",
+    float: "number",
+    int: "integer",
+    bool: "boolean",
+    dict: "object",
+    list: "array",
+}
+
+
+def _annotation_to_json_schema(annotation) -> dict:
+    """
+    Converts a python type annotation to a JSON schema fragment (best effort, defaults to string).
+    """
+    if annotation is inspect.Parameter.empty:
+        return {"type": "string"}
+
+    if annotation in _JSON_SCHEMA_TYPES:
+        return {"type": _JSON_SCHEMA_TYPES[annotation]}
+
+    origin = typing.get_origin(annotation)
+    args = typing.get_args(annotation)
+
+    if origin is typing.Literal:
+        values = list(args)
+        value_types = {_JSON_SCHEMA_TYPES.get(type(value)) for value in values}
+        schema = {"enum": values}
+        if len(value_types) == 1 and None not in value_types:
+            schema = {"type": value_types.pop(), **schema}
+        return schema
+
+    if origin is typing.Union or origin is types.UnionType:
+        options = [arg for arg in args if arg is not type(None)]
+        if len(options) == 1:
+            return _annotation_to_json_schema(options[0])
+        return {"anyOf": [_annotation_to_json_schema(option) for option in options]}
+
+    if origin in (list, tuple, set, frozenset):
+        schema = {"type": "array"}
+        if args and args[0] is not Ellipsis:
+            schema["items"] = _annotation_to_json_schema(args[0])
+        return schema
+
+    if origin is dict:
+        return {"type": "object"}
+
+    return {"type": "string"}
+
+
+def _function_to_json_schema(func: callable) -> dict:
+    """
+    Builds a JSON schema describing the parameters of an action function.
+    """
+    parameters = {"type": "object", "properties": {}, "required": []}
+    for param_name, param in inspect.signature(func).parameters.items():
+        parameters["properties"][param_name] = _annotation_to_json_schema(param.annotation)
+        if param.default is inspect.Parameter.empty:
+            parameters["required"].append(param_name)
+        else:
+            parameters["properties"][param_name]["default"] = param.default
+    return parameters
+
+
 @dataclass
 class HighLevelAction:
     # entrypoint: callable
@@ -329,6 +394,7 @@ class HighLevelActionSet(AbstractActionSet):
 
         # parse the actions and build the action space
         self.action_set: dict[str, HighLevelAction] = {}
+        self._tool_parameters: dict[str, dict] = {}
         self.python_includes = ""
 
         # include playwright imports
@@ -390,6 +456,7 @@ if demo_mode is None:
                 description=description,
                 examples=examples,
             )
+            self._tool_parameters[func.__name__] = _function_to_json_schema(func)
 
     def example_action(self, abstract: bool, max_examples: int = 3) -> str:
         """
@@ -419,7 +486,9 @@ One single action to be executed. You can only use one action at a time."""
             rng = random.Random(1)
             rng.shuffle(picked_examples)
 
-            if self.multiaction:
+            if not picked_examples:
+                return ""
+            elif self.multiaction:
                 return "\n".join(picked_examples[:max_examples])
             else:
                 return picked_examples[0]
@@ -517,7 +586,12 @@ Only a single action can be provided at once."""
 
     def to_tool_description(self, api="openai", add_examples=True) -> list[dict]:
         """
-        Translates actions to tool descriptions following the OpenAI API format.
+        Translates actions to tool descriptions following the OpenAI or Anthropic API format.
+
+        Args:
+            api: "openai" (schema under "parameters", with "type": "function") or "anthropic"
+                (schema under "input_schema").
+            add_examples: whether to append the action examples to each tool description.
 
         Returns:
             A list of tool descriptors.
@@ -529,31 +603,7 @@ Only a single action can be provided at once."""
         schema = schema_keys.get(api, "parameters")
         tools = []
         for tool_name, action in self.action_set.items():
-            # Parse the signature to extract parameter names and types
-            parameters = {"type": "object", "properties": {}, "required": []}
-            signature = inspect.signature(globals()[tool_name])
-            for param_name, param in signature.parameters.items():
-                param_type = "string"  # Default to string if type is not specified
-                if param.annotation != inspect.Parameter.empty:
-
-                    type_map = {
-                        str: "string",
-                        float: "number",
-                        int: "number",
-                        bool: "boolean",
-                        dict: "object",
-                        list: "array",
-                    }
-                    param_type = type_map.get(param.annotation, "string")
-
-                parameters["properties"][param_name] = {
-                    "type": param_type,
-                    # "description": f"Parameter {param_name} of type {param_type}",
-                }
-                if param.default == inspect.Parameter.empty:
-                    parameters["required"].append(param_name)
-                else:
-                    parameters["properties"][param_name]["default"] = param.default
+            parameters = copy.deepcopy(self._tool_parameters[tool_name])
 
             # Construct the tool descriptor
             description = action.description
