@@ -36,6 +36,7 @@ CHECKBOX_URL = f"file://{__DATA_DIR}/input_type/checkbox_input.html"
 MULTI_IFRAME_URL = f"file://{__DATA_DIR}/basic_iframe_site/basic_iframe_2.html"
 OBSTRUCTED_CHECKBOX_URL = f"file://{__DATA_DIR}/obstructed_checkbox_page.html"
 LOTS_OF_IFRAMES_URL = f"file://{__DATA_DIR}/lots_of_iframes.html"
+DETACHING_TEXTBOX_URL = f"file://{__DATA_DIR}/detaching_textbox.html"
 
 
 def test_action_parser():
@@ -823,6 +824,65 @@ keyboard_type('Reno')
     assert not obs["last_action_error"]
     assert fname.get("value") == "Jean"
     assert lname.get("value") == "Jugnot"
+
+    env.close()
+
+
+def test_fill_demo_mode():
+    action_set = HighLevelActionSet(subsets=["bid"], demo_mode="default")
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": TEXT_INPUT_URL},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        timeout=__TIMEOUT,
+        action_mapping=action_set.to_python_code,
+    )
+
+    def get_fname(obs):
+        soup = bs4.BeautifulSoup(flatten_dom_to_str(obs["dom_object"]), "lxml")
+        return soup.find("input", attrs={"id": "fname"})
+
+    obs, info = env.reset()
+    fname = get_fname(obs)
+
+    obs, reward, terminated, truncated, info = env.step(
+        f"fill({repr(fname.get(BID_ATTR))}, 'Christian')"
+    )
+    fname = get_fname(obs)
+    assert not obs["last_action_error"]
+    assert fname.get("value") == "Christian"
+
+    obs, reward, terminated, truncated, info = env.step(f"fill({repr(fname.get(BID_ATTR))}, '')")
+    fname = get_fname(obs)
+    assert not obs["last_action_error"]
+    assert fname.get("value") == ""
+
+    env.close()
+
+
+# demo-mode typing must time out (not hang) when the field is re-rendered mid-action
+def test_fill_demo_mode_detached_element_times_out():
+    action_set = HighLevelActionSet(subsets=["bid"], demo_mode="default")
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": DETACHING_TEXTBOX_URL},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        timeout=__TIMEOUT,
+        action_mapping=action_set.to_python_code,
+    )
+
+    obs, info = env.reset()
+    soup = bs4.BeautifulSoup(flatten_dom_to_str(obs["dom_object"]), "lxml")
+    textbox = soup.find("input", attrs={"id": "textbox"})
+
+    obs, reward, terminated, truncated, info = env.step(
+        f"fill({repr(textbox.get(BID_ATTR))}, 'hello')"
+    )
+
+    assert "Timeout" in obs["last_action_error"]
+    assert info["action_exec_stop"] - info["action_exec_start"] < 30
 
     env.close()
 
