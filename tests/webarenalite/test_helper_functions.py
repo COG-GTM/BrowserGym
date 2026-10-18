@@ -154,6 +154,28 @@ def test_revoked_token_refetched_on_401(helpers, magento):
     assert magento.token_requests == 2
 
 
+def test_concurrent_401s_share_one_refreshed_token(helpers, magento):
+    helpers.shopping_get_sku_latest_review_author("B01")
+    magento.valid_tokens.clear()
+
+    workers = 8
+    barrier = threading.Barrier(workers)
+    results = []
+
+    def evaluate():
+        barrier.wait()
+        results.append(helpers.shopping_get_sku_latest_review_rating("B01"))
+
+    threads = [threading.Thread(target=evaluate) for _ in range(workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert results == ["80"] * workers
+    assert magento.token_requests == 2
+
+
 def test_failed_login_not_cached(helpers, magento, monkeypatch):
     monkeypatch.setitem(helpers.ACCOUNTS["shopping_site_admin"], "password", "wrong")
     assert helpers.shopping_get_auth_token() == {"message": "invalid credentials"}

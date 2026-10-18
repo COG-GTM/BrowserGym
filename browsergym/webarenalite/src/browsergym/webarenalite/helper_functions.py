@@ -34,12 +34,13 @@ _shopping_token_lock = threading.Lock()
 _shopping_token_cache: dict[tuple[str, str], tuple[str, float]] = {}
 
 
-def shopping_get_auth_token(force_refresh: bool = False) -> str:
+def shopping_get_auth_token(rejected_token: str | None = None) -> str:
+    """Return the cached admin token, fetching a new one if it is missing, expired or rejected."""
     username = ACCOUNTS["shopping_site_admin"]["username"]
     cache_key = (SHOPPING, username)
     with _shopping_token_lock:
         cached = _shopping_token_cache.get(cache_key)
-        if not force_refresh and cached is not None and time.monotonic() < cached[1]:
+        if cached is not None and cached[0] != rejected_token and time.monotonic() < cached[1]:
             return cached[0]
 
         response = requests.post(
@@ -66,17 +67,15 @@ def shopping_get_auth_token(force_refresh: bool = False) -> str:
 
 def _shopping_admin_get(url: str, params: dict[str, str] | None = None) -> requests.Response:
     """GET a Magento REST endpoint with the cached admin token, re-fetching it once on a 401."""
-    response = None
-    for force_refresh in (False, True):
-        header = {
-            "Authorization": f"Bearer {shopping_get_auth_token(force_refresh=force_refresh)}",
-            "Content-Type": "application/json",
-        }
-        response = requests.get(
-            url, params=params, headers=header, timeout=SHOPPING_REQUEST_TIMEOUT
-        )
-        if response.status_code != 401:
-            break
+
+    def get(token: str) -> requests.Response:
+        header = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        return requests.get(url, params=params, headers=header, timeout=SHOPPING_REQUEST_TIMEOUT)
+
+    token = shopping_get_auth_token()
+    response = get(token)
+    if response.status_code == 401:
+        response = get(shopping_get_auth_token(rejected_token=token))
     return response
 
 
