@@ -716,13 +716,19 @@ document.addEventListener("visibilitychange", () => {
                 time.sleep(remaining)
                 return
             self.context.cookies()  # process pending Playwright callbacks (active page changes)
-            if self._is_page_settled(self.page, quiet_ms=100, within_ms=int(remaining * 1000)):
+            page = self.page
+            settled = self._is_page_settled(page, quiet_ms=100, deadline=deadline)
+            self.context.cookies()
+            # callbacks processed during the check may have changed the active page or navigated
+            if settled and page is self.page and not self._navigation_requested:
                 return
-            time.sleep(min(0.02, max(0, deadline - time.monotonic())))
+            if not settled:
+                time.sleep(min(0.02, max(0, deadline - time.monotonic())))
 
-    def _is_page_settled(self, page: playwright.sync_api.Page, quiet_ms: int, within_ms: int):
+    def _is_page_settled(self, page: playwright.sync_api.Page, quiet_ms: int, deadline: float):
         # child frames are part of the observation too, and track their own pending work
         for frame in page.frames:
+            within_ms = max(0, int((deadline - time.monotonic()) * 1000))
             try:
                 if not frame.evaluate(_FRAME_SETTLED_JS, [quiet_ms, within_ms]):
                     return False
