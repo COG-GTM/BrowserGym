@@ -229,6 +229,11 @@ function NewRunForm() {
                   aria-invalid={touched && !!errors.startUrl}
                 />
                 {fieldError("startUrl")}
+                {fromRunId && (
+                  <p className="text-xs text-muted-foreground" data-testid="rerun-start-url-hint">
+                    Runs don&apos;t record their start URL or headless setting, so re-enter them if the original run used them.
+                  </p>
+                )}
               </div>
             </div>
           )}
