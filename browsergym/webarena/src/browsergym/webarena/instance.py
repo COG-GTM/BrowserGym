@@ -17,6 +17,9 @@ class WebArenaInstance:
     """
 
     RESET_URL_VAR = "WA_FULL_RESET"  # used by full_reset()
+    RESET_REQUEST_TIMEOUT = 60  # seconds, per HTTP request to the reset endpoint
+    RESET_STATUS_INTERVAL = 20  # seconds, wait between status checks (also per-request timeout)
+    RESET_MAX_DURATION = 10 * 60  # seconds, overall bound on waiting for the reset to complete
 
     def __init__(
         self,
@@ -81,7 +84,12 @@ class WebArenaInstance:
             )
 
             # trigger instance reset
-            response = requests.get(reset_url)
+            try:
+                response = requests.get(reset_url, timeout=self.RESET_REQUEST_TIMEOUT)
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                raise RuntimeError(
+                    f"{self.__class__.__name__} reset request {reset_url} failed: {e}"
+                ) from e
             match response.status_code:
                 case 200:
                     logger.info(f"Reset started.")
@@ -93,20 +101,25 @@ class WebArenaInstance:
                     )
 
             # wait until reset complete
-            retry_after = 20  # 20 seconds wait between status checks
-            timeout = 10 * 60  # 10 minutes timeout
+            retry_after = self.RESET_STATUS_INTERVAL
+            timeout = self.RESET_MAX_DURATION
             start_time = time.time()
             while True:
-                # request instance status
-                response = requests.get(status_url)
-                # check for server error
-                if response.status_code != 200:
-                    raise Exception(
-                        f"{self.__class__.__name__} status request {status_url} failed ({response.status_code}): {response.text}"
-                    )
-                # check for readiness
-                if response.text == "Ready for duty!":
-                    break
+                # request instance status (an unresponsive server counts as "not ready yet")
+                try:
+                    response = requests.get(status_url, timeout=retry_after)
+                except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                    response = None
+                    logger.info(f"Status request {status_url} failed, retrying: {e}")
+                if response is not None:
+                    # check for server error
+                    if response.status_code != 200:
+                        raise Exception(
+                            f"{self.__class__.__name__} status request {status_url} failed ({response.status_code}): {response.text}"
+                        )
+                    # check for readiness
+                    if response.text == "Ready for duty!":
+                        break
                 # check for timeout
                 time_elapsed = time.time() - start_time
                 logger.info(f"Reset still running after {time_elapsed:.0f} seconds...")
