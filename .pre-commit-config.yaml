@@ -5,7 +5,7 @@ default_language_version:
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.2.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
         exclude: ^(.*)\.md$
@@ -13,32 +13,30 @@ repos:
       - id: check-yaml
         exclude: ^(.circleci/recipe|recipe)  # conda build recipes are templated
       - id: check-added-large-files
-  - repo: https://github.com/pocc/pre-commit-hooks
-    rev: v1.1.1
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.1  # keep in sync with ruff in pyproject.toml [dependency-groups]
     hooks:
-      - id: clang-format
-        args: [--style=file, -i]
-      - id: clang-tidy
-        args: [--fix, --fix-errors]
-  - repo: https://github.com/psf/black
-    rev: 24.2.0
+      - id: ruff-check
+        args: [--fix]
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 24.2.0  # keep in sync with black in pyproject.toml [dependency-groups]
     hooks:
       - id: black
         args: [--config=./pyproject.toml]
-  - repo: https://github.com/asottile/blacken-docs
-    rev: v1.12.1
+  - repo: https://github.com/adamchainz/blacken-docs
+    rev: 1.20.0
     hooks:
-    - id: blacken-docs
-      args: [ '--line-length', '100' ]
-      additional_dependencies: [black]
+      - id: blacken-docs
+        args: [--line-length, "100"]
+        additional_dependencies: [black==24.2.0]
   - repo: https://github.com/Lucas-C/pre-commit-hooks
-    rev: v1.5.5
+    rev: v1.5.6
     hooks:
-    - id: forbid-crlf
-    - id: remove-crlf
-    # Black does not clear tabs in docstrings
-    - id: forbid-tabs
-      files: '.*\.py$'
-    - id: remove-tabs
-      files: '.*\.py$'
-      args: [ '--whitespaces-count', '4' ]
+      - id: forbid-crlf
+      - id: remove-crlf
+      # Black does not clear tabs in docstrings
+      - id: forbid-tabs
+        files: '.*\.py$'
+      - id: remove-tabs
+        files: '.*\.py$'
+        args: [--whitespaces-count, "4"]
