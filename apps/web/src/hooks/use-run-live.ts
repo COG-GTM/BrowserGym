@@ -22,6 +22,8 @@ export interface RunLiveState {
   pending: RunEvent[];
   /** User messages accepted by POST /chat but not yet echoed into chat.jsonl by the runner. */
   outbox: ChatMessage[];
+  /** chatKeys of echoes already used to confirm a send, so one echo never acknowledges two sends. */
+  acked: string[];
 }
 
 type Action =
@@ -43,6 +45,7 @@ export const initialRunLiveState: RunLiveState = {
   loading: true,
   pending: [],
   outbox: [],
+  acked: [],
 };
 
 const chatKey = (m: ChatMessage) => `${m.role}|${m.timestamp}|${m.message}`;
@@ -75,15 +78,29 @@ function isEchoOf(echo: ChatMessage, sent: ChatMessage): boolean {
   );
 }
 
-function confirmOutbox(outbox: ChatMessage[], confirmed: ChatMessage[]): ChatMessage[] {
-  if (!outbox.length) return outbox;
-  const remaining = [...outbox];
-  for (const m of confirmed) {
-    const i = remaining.findIndex((sent) => isEchoOf(m, sent));
-    if (i !== -1) remaining.splice(i, 1);
+/** Confirms pending sends with echoes the client hasn't seen before (`known` = chat already held). */
+function confirmOutbox(
+  state: Pick<RunLiveState, "outbox" | "acked">,
+  incoming: ChatMessage[],
+  known: ChatMessage[],
+): Pick<RunLiveState, "outbox" | "acked"> {
+  if (!state.outbox.length) return state;
+  const seen = new Set([...known.map(chatKey), ...state.acked]);
+  const outbox = [...state.outbox];
+  const acked = [...state.acked];
+  for (const m of incoming) {
+    const key = chatKey(m);
+    if (seen.has(key)) continue;
+    const i = outbox.findIndex((sent) => isEchoOf(m, sent));
+    if (i === -1) continue;
+    outbox.splice(i, 1);
+    acked.push(key);
+    seen.add(key);
   }
-  return remaining;
+  return { outbox, acked };
 }
+
+const byTime = (a: ChatMessage, b: ChatMessage) => Date.parse(a.timestamp) - Date.parse(b.timestamp);
 
 function applyEvent(state: RunLiveState, event: RunEvent): RunLiveState {
   switch (event.type) {
@@ -104,7 +121,7 @@ function applyEvent(state: RunLiveState, event: RunEvent): RunLiveState {
     }
     case "chat":
       return event.chat
-        ? { ...state, chat: mergeChat(state.chat, [event.chat]), outbox: confirmOutbox(state.outbox, [event.chat]) }
+        ? { ...state, ...confirmOutbox(state, [event.chat], state.chat), chat: mergeChat(state.chat, [event.chat]) }
         : state;
     case "log":
       return event.log
@@ -124,8 +141,8 @@ export function runLiveReducer(state: RunLiveState, action: Action): RunLiveStat
         ...state,
         run: action.run,
         steps: mergeSteps(action.steps, state.steps),
+        ...confirmOutbox(state, action.chat, state.chat),
         chat: mergeChat(action.chat, state.chat),
-        outbox: confirmOutbox(state.outbox, action.chat),
         loading: false,
         error: null,
         pending: [],
@@ -141,9 +158,12 @@ export function runLiveReducer(state: RunLiveState, action: Action): RunLiveStat
     case "run":
       return { ...state, run: action.run };
     case "chat":
-      // Already echoed (e.g. the SSE event beat the POST response): nothing to add.
-      if (state.chat.some((m) => isEchoOf(m, action.message))) return state;
+    {
+      // Already echoed (the SSE event beat the POST response): consume that echo instead of adding.
+      const echo = state.chat.find((m) => isEchoOf(m, action.message) && !state.acked.includes(chatKey(m)));
+      if (echo) return { ...state, acked: [...state.acked, chatKey(echo)] };
       return { ...state, outbox: [...state.outbox, action.message] };
+    }
     case "error":
       return { ...state, error: action.error, loading: false };
   }
@@ -220,6 +240,10 @@ export function useRunLive(runId: string) {
   );
 
   const { outbox, ...rest } = state;
-  const chat = useMemo(() => (outbox.length ? [...rest.chat, ...outbox] : rest.chat), [rest.chat, outbox]);
+  // Pending sends are placed by send time; Array.prototype.sort is stable for equal timestamps.
+  const chat = useMemo(
+    () => (outbox.length ? [...rest.chat, ...outbox].sort(byTime) : rest.chat),
+    [rest.chat, outbox],
+  );
   return { ...rest, chat, cancel, sendChat, reload };
 }
