@@ -1,11 +1,13 @@
 # MCP server for BrowserGym
 import argparse
 import asyncio
+import functools
 import re
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 import gymnasium as gym
 from mcp.server.fastmcp import FastMCP
@@ -29,6 +31,22 @@ class AppContext:
     config: BgymConfig
     task_id: str
     actions: HighLevelActionSet
+    lock: asyncio.Lock
+    executor: ThreadPoolExecutor = field(default_factory=lambda: PLAYWRIGHT_EXECUTOR)
+
+    async def run(self, func: Callable, *args, **kwargs) -> Any:
+        return await run_in_executor(self.executor, func, *args, **kwargs)
+
+
+# Playwright's sync API is bound to the thread that started it, and browsergym keeps one
+# global Playwright instance per process. Every env call therefore runs on this single,
+# process-wide worker thread, which outlives individual server lifespans.
+PLAYWRIGHT_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="browsergym-playwright")
+
+
+async def run_in_executor(executor: ThreadPoolExecutor, func: Callable, *args, **kwargs) -> Any:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(executor, functools.partial(func, *args, **kwargs))
 
 
 def get_cli_args():
@@ -105,7 +123,9 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     """Manage application lifecycle with type-safe context"""
     # Initialize on startup
     actions = HighLevelActionSet(demo_mode=config.demo_mode, subsets=args.subset)
-    _gym: BrowserEnv = await asyncio.to_thread(
+    executor = PLAYWRIGHT_EXECUTOR
+    _gym: BrowserEnv = await run_in_executor(
+        executor,
         gym.make,
         task_id,
         headless=config.headless,
@@ -114,13 +134,19 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         timeout=config.timeout_ms,
         task_kwargs={"start_url": "about:blank"},
     )  # type: ignore
-    await asyncio.to_thread(_gym.reset)
-
     try:
-        yield AppContext(gym=_gym, config=config, task_id=task_id, actions=actions)
+        await run_in_executor(executor, _gym.reset)
+        yield AppContext(
+            gym=_gym,
+            config=config,
+            task_id=task_id,
+            actions=actions,
+            lock=asyncio.Lock(),
+            executor=executor,
+        )
     finally:
         # Cleanup on shutdown
-        await asyncio.to_thread(_gym.close)
+        await run_in_executor(executor, _gym.close)
 
 
 mcp = FastMCP("BrowserGym", lifespan=app_lifespan)
@@ -133,6 +159,33 @@ def format_func_call(func: Callable, args, kwargs) -> str:
     return f"{func.__name__}({all_args_str})"
 
 
+def execute_action(
+    gym: BrowserEnv, fn: Callable, args, kwargs, validate: bool, demo_mode: str
+) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
+    """Run pre_step, the action and post_step back to back. Must run on the Playwright thread."""
+    import browsergym.core.action.functions as fn_context
+
+    gym.last_action = format_func_call(fn, args, kwargs)
+    info, send_message_to_user, report_infeasible_instructions = gym.pre_step()
+
+    # Set up the module vars from the current state of the gym
+    fn_context.send_message_to_user = send_message_to_user
+    fn_context.report_infeasible_instructions = report_infeasible_instructions
+    fn_context.page = gym.page
+    fn_context.demo_mode = demo_mode
+
+    try:
+        fn(*args, **kwargs)
+        gym.last_action_error = ""
+    except Exception as e:
+        gym.last_action_error = f"{type(e).__name__}: {e}"
+        match = re.match("TimeoutError: Timeout ([0-9]+)ms exceeded.", gym.last_action_error)
+        if match:
+            info["action_exec_timeout"] = float(match.groups()[0]) / 1000
+
+    return gym.post_step(info, validate)
+
+
 def fn_wrapper(func: Callable, validate: bool = True):
     async def decorator(*args, **kwargs):
         """
@@ -143,8 +196,11 @@ def fn_wrapper(func: Callable, validate: bool = True):
         4. Executes the function from this module and handles any exceptions
         5. Executes the post_step method of the gym
 
+        Steps 2-5 run together on the app's single Playwright thread, and tool calls are
+        serialized so that only one action drives the page at a time.
         """
-        gym: BrowserEnv = mcp.get_context().request_context.lifespan_context.gym  # type: ignore
+        app_ctx: AppContext = mcp.get_context().request_context.lifespan_context  # type: ignore
+        gym: BrowserEnv = app_ctx.gym
         while not isinstance(gym, BrowserEnv):
             gym = (
                 gym.env
@@ -155,28 +211,10 @@ def fn_wrapper(func: Callable, validate: bool = True):
 
         fn = getattr(fn_context, func.__name__)
 
-        gym.last_action = format_func_call(fn, args, kwargs)
-        info, send_message_to_user, report_infeasible_instructions = await asyncio.to_thread(
-            gym.pre_step
-        )
-
-        # Set up the module vars from the current state of the gym
-        fn_context.send_message_to_user = send_message_to_user
-        fn_context.report_infeasible_instructions = report_infeasible_instructions
-        fn_context.page = gym.page
-        fn_context.demo_mode = config.demo_mode
-
-        try:
-            fn(*args, **kwargs)
-            gym.last_action_error = ""
-        except Exception as e:
-            gym.last_action_error = f"{type(e).__name__}: {e}"
-            match = re.match("TimeoutError: Timeout ([0-9]+)ms exceeded.", gym.last_action_error)
-            if match:
-                info["action_exec_timeout"] = float(match.groups()[0]) / 1000
-
-        results = await asyncio.to_thread(gym.post_step, info, validate)
-        return results
+        async with app_ctx.lock:
+            return await app_ctx.run(
+                execute_action, gym, fn, args, kwargs, validate, app_ctx.config.demo_mode
+            )
 
     decorator.__wrapped__ = func  # type: ignore
     decorator.__name__ = func.__name__
