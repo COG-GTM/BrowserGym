@@ -56,7 +56,7 @@ async ([parent_bid, bid_attr_name, tags_to_mark]) => {
     // get all DOM elements in the current frame (does not include elements in shadowDOMs)
     let elements = Array.from(document.querySelectorAll('*'));
     let som_buttons = [];
-    i = 0;
+    let i = 0;
     while (i < elements.length) {
         const elem = elements[i];
         // add shadowDOM elements to the elements array, in such a way that order is preserved

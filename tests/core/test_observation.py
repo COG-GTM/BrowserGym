@@ -141,6 +141,35 @@ def test_extract_dom_simple():
     env.close()
 
 
+def test_mark_elements_does_not_leak_globals():
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": TEST_PAGE},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        viewport=__VIEWPORT,
+        timeout=__TIMEOUT,
+    )
+    obs, info = env.reset()
+
+    page = env.unwrapped.page
+    page.evaluate("window.i = 'task-state'")
+
+    _pre_extract(page)
+    _post_extract(page)
+
+    # the marking script must not overwrite the page's own global variables
+    assert page.evaluate("window.i") == "task-state"
+
+    page.evaluate("delete window.i")
+    _pre_extract(page)
+    _post_extract(page)
+
+    assert page.evaluate("'i' in window") is False
+
+    env.close()
+
+
 def test_extract_dom_multi_iframe():
     env = gym.make(
         "browsergym/openended",
