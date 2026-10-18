@@ -3,12 +3,15 @@ Evaluation for two strings or list of strings.
 Code taken from the DROP benchmark - https://github.com/allenai/allennlp-reading-comprehension/blob/master/allennlp_rc/eval/drop_eval.py
 """
 
+import logging
 import re
 import string
 from typing import List, Set, Tuple, Union
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
+
+logger = logging.getLogger(__name__)
 
 
 # From here through _normalize_answer was originally copied from:
@@ -169,6 +172,12 @@ def evaluate_strings(prediction, gold):
         gold_bags = _answer_to_bags(gold)
         f1_per_bag = _align_bags(predicted_bags[1], gold_bags[1])
         f1 = np.mean(f1_per_bag)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
+        logger.warning(
+            "String evaluation failed, scoring as 0.0 (prediction=%r, gold=%r)",
+            prediction,
+            gold,
+            exc_info=True,
+        )
         f1 = 0.0
     return f1
