@@ -3,19 +3,20 @@ __version__ = "0.14.3.dev1"
 import playwright.sync_api
 
 # we use a global playwright instance
-_PLAYWRIGHT = None
+_PLAYWRIGHT: playwright.sync_api.Playwright | None = None
 
 
-def _set_global_playwright(pw: playwright.sync_api.Playwright):
+def _set_global_playwright(pw: playwright.sync_api.Playwright) -> None:
     global _PLAYWRIGHT
     _PLAYWRIGHT = pw
 
 
-def _get_global_playwright():
+def _get_global_playwright() -> playwright.sync_api.Playwright:
     global _PLAYWRIGHT
     if not _PLAYWRIGHT:
         pw = playwright.sync_api.sync_playwright().start()
         _set_global_playwright(pw)
+        return pw
 
     return _PLAYWRIGHT
 

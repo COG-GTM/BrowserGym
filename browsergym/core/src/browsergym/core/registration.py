@@ -1,5 +1,6 @@
+from collections.abc import Callable
 from functools import partial
-from typing import Type
+from typing import Any
 
 import gymnasium as gym
 
@@ -13,11 +14,11 @@ class frozen_partial:
 
     """
 
-    def __init__(self, func, **frozen_kwargs):
+    def __init__(self, func: Callable[..., Any], **frozen_kwargs: Any) -> None:
         self.func = func
         self.frozen_kwargs = frozen_kwargs
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
         # check overlap between kwargs and frozen_kwargs
         clashing_kwargs = set(self.frozen_kwargs) & set(kwargs)  # key set intersection
         if clashing_kwargs:
@@ -30,13 +31,13 @@ class frozen_partial:
 
 def register_task(
     id: str,
-    task_class: Type[AbstractBrowserTask],
-    task_kwargs: dict = {},
-    default_task_kwargs: dict = {},
+    task_class: type[AbstractBrowserTask],
+    task_kwargs: dict[str, Any] = {},
+    default_task_kwargs: dict[str, Any] = {},
     nondeterministic: bool = True,
-    *args,
-    **kwargs,
-):
+    *args: Any,
+    **kwargs: Any,
+) -> None:
     """
     Registers a browser task as a gym environment with its unique id.
 
@@ -57,7 +58,7 @@ def register_task(
                 f"Illegal attempt to register Browsergym environment {id} with both frozen and default values for task parameters {clashing_kwargs}."
             )
 
-    task_entrypoint = task_class
+    task_entrypoint: Callable[..., AbstractBrowserTask] = task_class
 
     # freeze task_kwargs (cannot be overriden at environment creation)
     task_entrypoint = frozen_partial(task_class, **task_kwargs)

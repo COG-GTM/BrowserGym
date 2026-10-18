@@ -4,7 +4,8 @@ import re
 import time
 from abc import ABC
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional
+from collections.abc import Callable
+from typing import Any, Literal, cast
 
 import gymnasium as gym
 import numpy as np
@@ -31,7 +32,7 @@ from .task import AbstractBrowserTask
 logger = logging.getLogger(__name__)
 
 
-def _try_to_extract_legacy_goal(goal: list):
+def _try_to_extract_legacy_goal(goal: list[dict[str, Any]]) -> str:
     legacy_goal_strings = []
     for message in goal:
         if message["type"] == "text":
@@ -58,27 +59,29 @@ class BrowserEnv(gym.Env, ABC):
     def __init__(
         self,
         # task-related arguments
-        task_entrypoint: type[AbstractBrowserTask],
-        task_kwargs: dict = {},
-        viewport: Optional[dict] = None,  # will override the task's viewport
-        slow_mo: Optional[int] = None,  # will override the task's slow_mo
-        timeout: Optional[int] = None,  # will override the task's timeout
-        locale: Optional[str] = None,  # will override the task's locale
-        timezone_id: Optional[str] = None,  # will override the task's timezone_id
+        task_entrypoint: Callable[..., AbstractBrowserTask],
+        task_kwargs: dict[str, Any] = {},
+        viewport: (
+            playwright.sync_api.ViewportSize | None
+        ) = None,  # will override the task's viewport
+        slow_mo: int | None = None,  # will override the task's slow_mo
+        timeout: int | None = None,  # will override the task's timeout
+        locale: str | None = None,  # will override the task's locale
+        timezone_id: str | None = None,  # will override the task's timezone_id
         tags_to_mark: Literal["all", "standard_html"] = "standard_html",
         # interactive / debugging arguments
         headless: bool = True,
         wait_for_user_message: bool = False,
         terminate_on_infeasible: bool = True,
         resizeable_window: bool = False,
-        record_video_dir: Optional[str] = None,
-        pw_chromium_kwargs: dict = {},
-        pw_context_kwargs: dict = {},
+        record_video_dir: str | None = None,
+        pw_chromium_kwargs: dict[str, Any] = {},
+        pw_context_kwargs: dict[str, Any] = {},
         # agent-related arguments
-        action_mapping: Optional[callable] = HighLevelActionSet().to_python_code,
+        action_mapping: Callable[[str], str] | None = HighLevelActionSet().to_python_code,
         use_raw_page_output: bool = False,
         pre_observation_delay: float = 0.5,  # seconds
-    ):
+    ) -> None:
         """
         Instantiate a ready to use BrowserEnv gym environment.
 
@@ -109,7 +112,7 @@ class BrowserEnv(gym.Env, ABC):
         self.timeout = timeout
         self.locale = locale
         self.timezone_id = timezone_id
-        self.tags_to_mark = tags_to_mark
+        self.tags_to_mark: Literal["all", "standard_html"] = tags_to_mark
         self.headless = headless
         self.wait_for_user_message = wait_for_user_message
         self.terminate_on_infeasible = terminate_on_infeasible
@@ -125,16 +128,16 @@ class BrowserEnv(gym.Env, ABC):
         assert tags_to_mark in ("all", "standard_html")
 
         # task
-        self.task = None
+        self.task: AbstractBrowserTask | None = None
 
-        # playwright
-        self.browser: playwright.sync_api.Browser = None
-        self.context: playwright.sync_api.BrowserContext = None
-        self.page: playwright.sync_api.Page = None
-        self.page_history: dict = {}
+        # playwright (set in reset())
+        self.browser: playwright.sync_api.Browser = None  # type: ignore
+        self.context: playwright.sync_api.BrowserContext = None  # type: ignore
+        self.page: playwright.sync_api.Page = None  # pyright: ignore[reportAttributeAccessIssue]
+        self.page_history: dict[playwright.sync_api.Page, None] = {}
 
-        # chat
-        self.chat: Chat = None
+        # chat (set in reset())
+        self.chat: Chat = None  # pyright: ignore[reportAttributeAccessIssue]
 
         # observation space
         if use_raw_page_output:
@@ -154,11 +157,11 @@ class BrowserEnv(gym.Env, ABC):
                     "goal_object": gym.spaces.Sequence(AnyDict()),
                     "open_pages_urls": gym.spaces.Sequence(Unicode()),
                     "open_pages_titles": gym.spaces.Sequence(Unicode()),
-                    "active_page_index": gym.spaces.Box(low=0, high=255, dtype=int),
+                    "active_page_index": gym.spaces.Box(low=0, high=255, dtype=np.int_),
                     "url": Unicode(),
                     "last_action": Unicode(),
                     "last_action_error": Unicode(),
-                    "elapsed_time": gym.spaces.Box(low=0, high=np.inf, dtype=float),
+                    "elapsed_time": gym.spaces.Box(low=0, high=np.inf, dtype=np.float64),
                 }
             )
         else:
@@ -178,7 +181,7 @@ class BrowserEnv(gym.Env, ABC):
                     "open_pages_urls": gym.spaces.Sequence(Unicode()),
                     "open_pages_titles": gym.spaces.Sequence(Unicode()),
                     "active_page_index": gym.spaces.Box(
-                        low=0, high=255, dtype=int
+                        low=0, high=255, dtype=np.int_
                     ),  # TODO: change to an Integer (breaking change for users)
                     "url": Unicode(),
                     "screenshot": AnyBox(
@@ -194,7 +197,7 @@ class BrowserEnv(gym.Env, ABC):
                     "last_action": Unicode(),
                     "last_action_error": Unicode(),
                     "elapsed_time": gym.spaces.Box(
-                        low=0, high=np.inf, dtype=float
+                        low=0, high=np.inf, dtype=np.float64
                     ),  # TODO: change to a Float (breaking change for users)
                 }
             )
@@ -202,7 +205,7 @@ class BrowserEnv(gym.Env, ABC):
         # action space
         self.action_space = Unicode()
 
-    def close(self):
+    def close(self) -> None:
         # stop the task
         if self.task:
             self.task.teardown()
@@ -210,19 +213,21 @@ class BrowserEnv(gym.Env, ABC):
         # close the chat
         if self.chat:
             self.chat.close()
-            self.chat = None
+            self.chat = None  # pyright: ignore[reportAttributeAccessIssue]
         # close the browser context
         if self.context:
             self.context.close()
-            self.context = None
+            self.context = None  # pyright: ignore[reportAttributeAccessIssue]
         # close the browser
         if self.browser:
             self.browser.close()
-            self.browser = None
+            self.browser = None  # pyright: ignore[reportAttributeAccessIssue]
 
-    def reset(self, seed=None, *args, **kwargs):
+    def reset(
+        self, seed: int | None = None, *args: Any, **kwargs: Any
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         super().reset(seed=seed, *args, **kwargs)
-        self.np_random = None  # make sure all randomness is handled by the task
+        self.np_random = None  # pyright: ignore[reportAttributeAccessIssue]  # make sure all randomness is handled by the task
 
         if self.task:
             self.task.teardown()
@@ -233,7 +238,7 @@ class BrowserEnv(gym.Env, ABC):
         # create a new task
         self.task = self.task_entrypoint(seed=seed, **self.task_kwargs)
 
-        def override_property(task, env, property):
+        def override_property(task: AbstractBrowserTask, env: BrowserEnv, property: str) -> Any:
             """Extract property value from env if not None, otherwise from task."""
             env_value = getattr(env, property)
             task_value = getattr(task, property)
@@ -257,7 +262,7 @@ class BrowserEnv(gym.Env, ABC):
         pw: playwright.sync_api.Playwright = _get_global_playwright()
         # important: change playwright's test id attribute from "data-testid" to "bid"
         pw.selectors.set_test_id_attribute(BROWSERGYM_ID_ATTRIBUTE)
-        args = [
+        launch_args = [
             (
                 f"--window-size={viewport['width']},{viewport['height']}"
                 if self.resizeable_window
@@ -265,13 +270,13 @@ class BrowserEnv(gym.Env, ABC):
             ),
             "--disable-features=OverlayScrollbars,ExtendedOverlayScrollbars",  # otherwise the screenshot doesn't see the scrollbars
         ]
-        args = [arg for arg in args if arg is not None]  # Remove None values
+        launch_args = [arg for arg in launch_args if arg is not None]  # Remove None values
 
         # create a new browser
         self.browser = pw.chromium.launch(
             headless=self.headless,
             slow_mo=slow_mo,
-            args=args,
+            args=launch_args,
             ignore_default_args=[
                 "--hide-scrollbars"
             ],  # otherwise the screenshot doesn't see the scrollbars
@@ -401,25 +406,27 @@ document.addEventListener("visibilitychange", () => {
         # TODO this is a bit hacky, find a better solution to record videos
         if self.record_video_dir:
             info["recording_start_time"] = recording_start_time
-            info["recording_file"] = str(self.page.video.path())
+            info["recording_file"] = str(cast(playwright.sync_api.Video, self.page.video).path())
             info["chat"] = {
                 "recording_start_time": self.chat.recording_start_time,
-                "recording_file": str(self.chat.page.video.path()),
+                "recording_file": str(cast(playwright.sync_api.Video, self.chat.page.video).path()),
             }
 
         return obs, info
 
-    def pre_step(self) -> tuple[dict[str, Any], Callable, Callable]:
-        info = {}
+    def pre_step(
+        self,
+    ) -> tuple[dict[str, Any], Callable[[str], None], Callable[[str], None]]:
+        info: dict[str, Any] = {}
         info["action_exec_start"] = time.time()
         info["action_exec_timeout"] = 0
 
-        def send_message_to_user(text: str):
+        def send_message_to_user(text: str) -> None:
             if not isinstance(text, str):
                 raise ValueError(f"Forbidden value: {text} is not a string")
             self.chat.add_message(role="assistant", msg=text)
 
-        def report_infeasible_instructions(reason: str):
+        def report_infeasible_instructions(reason: str) -> None:
             if not isinstance(reason, str):
                 raise ValueError(f"Forbidden value: {reason} is not a string")
             self.chat.add_message(role="infeasible", msg=reason)
@@ -537,12 +544,13 @@ document.addEventListener("visibilitychange", () => {
         truncated: bool = False
         return obs, reward, terminated, truncated, info
 
-    def _task_validate(self):
+    def _task_validate(self) -> tuple[float, bool, str, dict[str, Any]]:
         # back-up these in case validate() navigates pages and messes the history
         prev_active_page = self.page
         prev_page_history = self.page_history.copy()
         # call validate
-        reward, done, user_message, info = self.task.validate(self.page, self.chat.messages)
+        task = cast(AbstractBrowserTask, self.task)
+        reward, done, user_message, info = task.validate(self.page, self.chat.messages)
 
         # safety fix, in case validate() did mess up the active page and/or page history
         if prev_active_page != self.page or prev_page_history != self.page_history:
@@ -554,13 +562,13 @@ document.addEventListener("visibilitychange", () => {
 
         return reward, done, user_message, info
 
-    def _wait_for_user_message(self):
+    def _wait_for_user_message(self) -> None:
         # if last message is from the assistant, wait for a user message to continue
         # TODO: be smarter about when to wait for a user message (different action from the assistant?)
         if self.chat.messages[-1]["role"] == "assistant" and self.wait_for_user_message:
             self.chat.wait_for_user_message()
 
-    def _wait_dom_loaded(self):
+    def _wait_dom_loaded(self) -> None:
         for page in self.context.pages:
             try:
                 page.wait_for_load_state("domcontentloaded", timeout=3000)
@@ -572,7 +580,7 @@ document.addEventListener("visibilitychange", () => {
                 except playwright.sync_api.Error:
                     pass
 
-    def _activate_page_from_js(self, page: playwright.sync_api.Page):
+    def _activate_page_from_js(self, page: playwright.sync_api.Page) -> None:
         logger.debug(f"_activate_page_from_js(page) called, page={str(page)}")
         if not page.context == self.context:
             raise RuntimeError(
@@ -589,7 +597,7 @@ document.addEventListener("visibilitychange", () => {
 
         self.page = page
 
-    def _active_page_check(self):
+    def _active_page_check(self) -> None:
         # make sure there is always a page open
         # if all pages have been closed, create a new page
         if len(self.context.pages) == 0:
@@ -613,7 +621,7 @@ document.addEventListener("visibilitychange", () => {
         if self.page.is_closed():
             raise RuntimeError(f"Unexpected: active page has been closed ({self.page}).")
 
-    def _get_obs(self):
+    def _get_obs(self) -> dict[str, Any]:
         if self.use_raw_page_output:
             obs = {
                 "page": self.page,
@@ -662,6 +670,9 @@ document.addEventListener("visibilitychange", () => {
                 else:
                     raise e
             break
+        else:
+            # unreachable as long as EXTRACT_OBS_MAX_TRIES > 0 (last try never retries)
+            raise RuntimeError("Observation extraction failed: no tries left.")
 
         # post-extraction cleanup of temporary info in dom
         _post_extract(self.page)

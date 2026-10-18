@@ -4,7 +4,7 @@ from .base import AbstractActionSet
 
 
 class PythonActionSet(AbstractActionSet):
-    def describe(self, with_long_description: bool = True, with_examples: bool = True):
+    def describe(self, with_long_description: bool = True, with_examples: bool = True) -> str:
         """
         Returns a textual description of this action space.
         """
@@ -87,7 +87,7 @@ frame.get_by_test_id("ba2").fill("Hello world!")
 frame.get_by_test_id("ba3").click()
 """
 
-    def to_python_code(self, action):
+    def to_python_code(self, action: str) -> str:
         """
         Converts the given code action string to browsergym-compatible playwright code.
 

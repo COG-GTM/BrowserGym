@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 import playwright.sync_api
@@ -7,7 +8,7 @@ from . import get_global_demo_mode
 
 
 class AbstractActionSet(ABC):
-    def __init__(self, strict: bool = False):
+    def __init__(self, strict: bool = False) -> None:
         self.strict = strict
 
     @abstractmethod
@@ -23,7 +24,7 @@ class AbstractActionSet(ABC):
         """
 
     @abstractmethod
-    def to_python_code(self, action) -> str:
+    def to_python_code(self, action: str) -> str:
         """
         Converts the given action to browsergym-compatible python code.
 
@@ -34,7 +35,7 @@ class AbstractActionSet(ABC):
             Executable python code that performs the action in a browsergym environment.
         """
 
-    def to_tool_descriptor(self) -> list[Any]:
+    def to_tool_descriptor(self) -> list[Any] | None:
         """
         Converts the action set to a tool descriptor.
 
@@ -47,9 +48,9 @@ class AbstractActionSet(ABC):
 def execute_python_code(
     code: str,
     page: playwright.sync_api.Page,
-    send_message_to_user: callable,
-    report_infeasible_instructions: callable,
-):
+    send_message_to_user: Callable[[str], None],
+    report_infeasible_instructions: Callable[[str], None],
+) -> None:
     """
     Executes Python code in a new context, except for a playwright `page` object and a `send_message_to_user` function.
 

@@ -1,7 +1,9 @@
 import inspect
 import random
 import typing
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from . import utils
 from .base import AbstractActionSet
@@ -42,7 +44,7 @@ from .functions import (  # check,; uncheck,
 )
 from .parsers import action_docstring_parser, highlevel_action_parser
 
-ACTION_SUBSETS = {
+ACTION_SUBSETS: dict[str, list[Callable[..., None]]] = {
     "chat": [send_msg_to_user],
     "infeas": [report_infeasible],
     "bid": [
@@ -283,19 +285,19 @@ class HighLevelActionSet(AbstractActionSet):
 
     def __init__(
         self,
-        subsets: typing.Optional[ActionSubset | list[ActionSubset]] = [
+        subsets: ActionSubset | list[ActionSubset] | None = [
             "chat",
             "infeas",
             "bid",
             "nav",
             "tab",
         ],
-        custom_actions: typing.Optional[list[callable]] = None,
+        custom_actions: list[Callable[..., Any]] | None = None,
         multiaction: bool = True,
-        demo_mode: typing.Optional[DemoMode] = None,
+        demo_mode: DemoMode | None = None,
         strict: bool = False,
         retry_with_force: bool = False,
-    ):
+    ) -> None:
         super().__init__(strict)
         self.multiaction = multiaction
         self.demo_mode = demo_mode
@@ -307,7 +309,7 @@ class HighLevelActionSet(AbstractActionSet):
         if isinstance(subsets, str):
             subsets = [subsets]
 
-        allowed_actions = [noop]  # the noop action is always allowed
+        allowed_actions: list[Callable[..., Any]] = [noop]  # the noop action is always allowed
 
         # add actions from specified action sets
         if subsets:
@@ -370,7 +372,9 @@ if demo_mode is None:
             signature = f"{func.__name__}{inspect.signature(func)}"
 
             # parse docstring
-            description, examples = action_docstring_parser.parse_string(func.__doc__)
+            description, examples = action_docstring_parser.parse_string(
+                typing.cast(str, func.__doc__)
+            )
 
             # reconstruct action description
             description = " ".join(description)
@@ -424,7 +428,7 @@ One single action to be executed. You can only use one action at a time."""
             else:
                 return picked_examples[0]
 
-    def describe(self, with_long_description: bool = True, with_examples: bool = True):
+    def describe(self, with_long_description: bool = True, with_examples: bool = True) -> str:
         """
         Returns a textual description of this action space.
         """
@@ -471,7 +475,7 @@ Only a single action can be provided at once."""
 
         return description
 
-    def to_python_code(self, action):
+    def to_python_code(self, action: str) -> str:
         """
         Converts the given high-level action string to browsergym-compatible python code.
 
@@ -515,7 +519,9 @@ Only a single action can be provided at once."""
         # return the constructed python code
         return python_code
 
-    def to_tool_description(self, api="openai", add_examples=True) -> list[dict]:
+    def to_tool_description(
+        self, api: str = "openai", add_examples: bool = True
+    ) -> list[dict[str, Any]]:
         """
         Translates actions to tool descriptions following the OpenAI API format.
 
@@ -530,7 +536,7 @@ Only a single action can be provided at once."""
         tools = []
         for tool_name, action in self.action_set.items():
             # Parse the signature to extract parameter names and types
-            parameters = {"type": "object", "properties": {}, "required": []}
+            parameters: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
             signature = inspect.signature(globals()[tool_name])
             for param_name, param in signature.parameters.items():
                 param_type = "string"  # Default to string if type is not specified
@@ -562,7 +568,7 @@ Only a single action can be provided at once."""
                 for example in action.examples:
                     description += f"- {example}\n"
 
-            tool = {
+            tool: dict[str, Any] = {
                 "name": tool_name,
                 "description": description,
                 schema: parameters,

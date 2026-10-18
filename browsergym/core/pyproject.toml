@@ -40,3 +40,16 @@ files = ["requirements.txt"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/browsergym"]
+
+[tool.pyright]
+include = ["src/browsergym/core"]
+# owned by other workstreams (chat UI, MCP server) or not Python
+exclude = [
+    "src/browsergym/core/chat.py",
+    "src/browsergym/core/chat_files",
+    "src/browsergym/core/javascript",
+    "src/browsergym/core/utils/mcp_server.py",
+]
+pythonVersion = "3.10"
+typeCheckingMode = "standard"
+reportMissingModuleSource = false

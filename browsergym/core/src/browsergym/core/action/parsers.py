@@ -1,8 +1,9 @@
 import ast
 import pyparsing as pp
+from pyparsing.core import python_quoted_string
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 
 @dataclass
@@ -10,7 +11,7 @@ class NamedArgument:
     name: str
     value: Any
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{self.name}={repr(self.value)}"
 
 
@@ -34,7 +35,7 @@ def _build_highlevel_action_parser() -> pp.ParserElement:
 
     """
 
-    def make_keyword(kwd_str, kwd_value):
+    def make_keyword(kwd_str: str, kwd_value: bool | None) -> pp.ParserElement:
         return pp.Keyword(kwd_str).set_parse_action(pp.replace_with(kwd_value))
 
     TRUE = make_keyword("True", True)
@@ -43,30 +44,33 @@ def _build_highlevel_action_parser() -> pp.ParserElement:
 
     LBRACK, RBRACK, LBRACE, RBRACE, LPAREN, RPAREN, COLON = map(pp.Suppress, "[]{}():")
 
-    def literal_eval(toks):
-        return ast.literal_eval(toks[0])
+    def literal_eval(toks: pp.ParseResults) -> Any:
+        return ast.literal_eval(cast(str, toks[0]))
 
-    string = pp.python_quoted_string().set_parse_action(literal_eval)
+    string = python_quoted_string().set_parse_action(literal_eval)
     number = pp.pyparsing_common.number()
-    dict = pp.Forward().set_name("dict")  # will be defined later
-    list = pp.Forward().set_name("list")  # will be defined later
-    _tuple = pp.Forward().set_name("tuple")  # will be defined later
+    dict = pp.Forward()  # will be defined later
+    dict.set_name("dict")
+    list = pp.Forward()  # will be defined later
+    list.set_name("list")
+    _tuple = pp.Forward()  # will be defined later
+    _tuple.set_name("tuple")
     element = (string | number | dict | list | _tuple | TRUE | FALSE | NONE).set_name("element")
 
     list_items = pp.DelimitedList(element, allow_trailing_delim=True).set_name(None)
-    list << pp.Group(LBRACK + pp.Optional(list_items) + RBRACK, aslist=True)
-    _tuple << pp.Group(LPAREN + pp.Optional(list_items) + RPAREN, aslist=True).set_parse_action(
+    list <<= pp.Group(LBRACK + pp.Optional(list_items) + RBRACK, aslist=True)
+    _tuple <<= pp.Group(LPAREN + pp.Optional(list_items) + RPAREN, aslist=True).set_parse_action(
         lambda tokens: tuple(tokens[0])
     )
 
     dict_item = pp.Group(string + COLON + element, aslist=True).set_name("dict item")
     dict_items = pp.DelimitedList(dict_item, allow_trailing_delim=True).set_name(None)
-    dict << pp.Dict(LBRACE + pp.Optional(dict_items) + RBRACE, asdict=True)
+    dict <<= pp.Dict(LBRACE + pp.Optional(dict_items) + RBRACE, asdict=True)
 
     arg = element
     list_args = pp.DelimitedList(arg, allow_trailing_delim=True).set_name(None)
     named_arg = (pp.pyparsing_common.identifier() + pp.Literal("=") + element).set_parse_action(
-        lambda tokens: NamedArgument(name=tokens[0], value=tokens[2])
+        lambda tokens: NamedArgument(name=cast(str, tokens[0]), value=tokens[2])
     )
     list_named_args = pp.DelimitedList(named_arg, allow_trailing_delim=True).set_name(None)
     function_call = pp.pyparsing_common.identifier() + pp.Group(

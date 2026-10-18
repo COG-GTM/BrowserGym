@@ -3,7 +3,8 @@ import io
 import logging
 import pkgutil
 import re
-from typing import Literal
+from collections.abc import Sequence
+from typing import Any, Literal, cast
 
 import numpy as np
 import PIL.Image
@@ -12,6 +13,7 @@ import playwright.sync_api
 from .constants import BROWSERGYM_ID_ATTRIBUTE as BID_ATTR
 from .constants import BROWSERGYM_SETOFMARKS_ATTRIBUTE as SOM_ATTR
 from .constants import BROWSERGYM_VISIBILITY_ATTRIBUTE as VIS_ATTR
+from .typedefs import ElementProperties
 
 MARK_FRAMES_MAX_TRIES = 3
 
@@ -27,17 +29,17 @@ def _pre_extract(
     page: playwright.sync_api.Page,
     tags_to_mark: Literal["all", "standard_html"] = "standard_html",
     lenient: bool = False,
-):
+) -> None:
     """
     pre-extraction routine, marks dom elements (set bid and dynamic attributes like value and checked)
     """
-    js_frame_mark_elements = pkgutil.get_data(__name__, "javascript/frame_mark_elements.js").decode(
-        "utf-8"
-    )
+    js_frame_mark_elements = cast(
+        bytes, pkgutil.get_data(__name__, "javascript/frame_mark_elements.js")
+    ).decode("utf-8")
 
     # we can't run this loop in JS due to Same-Origin Policy
     # (can't access the content of an iframe from a another one)
-    def mark_frames_recursive(frame, frame_bid: str):
+    def mark_frames_recursive(frame: playwright.sync_api.Frame, frame_bid: str) -> None:
         assert frame_bid == "" or re.match(r"^[a-z][a-zA-Z]*$", frame_bid)
         logger.debug(f"Marking frame {repr(frame_bid)}")
 
@@ -79,9 +81,9 @@ def _pre_extract(
     mark_frames_recursive(page.main_frame, frame_bid="")
 
 
-def _post_extract(page: playwright.sync_api.Page):
-    js_frame_unmark_elements = pkgutil.get_data(
-        __name__, "javascript/frame_unmark_elements.js"
+def _post_extract(page: playwright.sync_api.Page) -> None:
+    js_frame_unmark_elements = cast(
+        bytes, pkgutil.get_data(__name__, "javascript/frame_unmark_elements.js")
     ).decode("utf-8")
 
     # we can't run this loop in JS due to Same-Origin Policy
@@ -112,7 +114,7 @@ def _post_extract(page: playwright.sync_api.Page):
                 raise e
 
 
-def extract_screenshot(page: playwright.sync_api.Page):
+def extract_screenshot(page: playwright.sync_api.Page) -> np.ndarray:
     """
     Extracts the screenshot image of a Playwright page using Chrome DevTools Protocol.
     Uses the bgym_scale_factor to capture higher resolution screenshots for better VLM understanding.
@@ -194,7 +196,9 @@ __BID_EXPR = r"([a-zA-Z0-9]+)"
 __DATA_REGEXP = re.compile(r"^browsergym_id_" + __BID_EXPR + r"\s?" + r"(.*)")
 
 
-def extract_data_items_from_aria(string: str, log_level: int = logging.NOTSET):
+def extract_data_items_from_aria(
+    string: str, log_level: int = logging.NOTSET
+) -> tuple[Sequence[str], str]:
     """
     Utility function to extract temporary data stored in the ARIA attributes of a node
     """
@@ -215,11 +219,11 @@ def extract_data_items_from_aria(string: str, log_level: int = logging.NOTSET):
 
 def extract_dom_snapshot(
     page: playwright.sync_api.Page,
-    computed_styles=[],
+    computed_styles: list[str] = [],
     include_dom_rects: bool = True,
     include_paint_order: bool = True,
     temp_data_cleanup: bool = True,
-):
+) -> dict[str, Any]:
     """
     Extracts the DOM snapshot of a Playwright page using Chrome DevTools Protocol.
 
@@ -256,7 +260,7 @@ def extract_dom_snapshot(
     return dom_snapshot
 
 
-def pop_bids_from_attribute(dom_snapshot, attr: str):
+def pop_bids_from_attribute(dom_snapshot: dict[str, Any], attr: str) -> None:
     try:
         target_attr_name_id = dom_snapshot["strings"].index(attr)
     except ValueError:
@@ -290,8 +294,10 @@ def pop_bids_from_attribute(dom_snapshot, attr: str):
                         break
 
 
-def extract_dom_extra_properties(dom_snapshot, scale_factor):
-    def to_string(idx):
+def extract_dom_extra_properties(
+    dom_snapshot: dict[str, Any], scale_factor: float
+) -> dict[str, ElementProperties]:
+    def to_string(idx: int) -> str | None:
         if idx == -1:
             return None
         else:
@@ -312,7 +318,7 @@ def extract_dom_extra_properties(dom_snapshot, scale_factor):
         som_string_id = -1
 
     # build the iframe tree (DFS from the first frame)
-    doc_properties = {
+    doc_properties: dict[int, dict[str, Any]] = {
         0: {
             "parent": None,
         }
@@ -390,7 +396,7 @@ def extract_dom_extra_properties(dom_snapshot, scale_factor):
                     doc_properties[doc]["nodes"][node_idx]["bid"] = to_string(value_string_id)
                 if name_string_id == vis_string_id:
                     doc_properties[doc]["nodes"][node_idx]["visibility"] = float(
-                        to_string(value_string_id)
+                        cast(str, to_string(value_string_id))
                     )
                 if name_string_id == som_string_id:
                     doc_properties[doc]["nodes"][node_idx]["set_of_marks"] = (
@@ -438,7 +444,7 @@ def extract_dom_extra_properties(dom_snapshot, scale_factor):
         # document["layout"]["paintOrders"]
 
     # collect the extra properties of all nodes with a browsergym_id attribute
-    extra_properties = {}
+    extra_properties: dict[str, ElementProperties] = {}
     for doc in doc_properties.keys():
         for node in doc_properties[doc]["nodes"]:
             bid = node["bid"]
@@ -460,7 +466,7 @@ def extract_dom_extra_properties(dom_snapshot, scale_factor):
     return extra_properties
 
 
-def extract_all_frame_axtrees(page: playwright.sync_api.Page):
+def extract_all_frame_axtrees(page: playwright.sync_api.Page) -> dict[str, dict[str, Any]]:
     """
     Extracts the AXTree of all frames (main document and iframes) of a Playwright page using Chrome DevTools Protocol.
 
@@ -533,7 +539,7 @@ def extract_all_frame_axtrees(page: playwright.sync_api.Page):
     return frame_axtrees
 
 
-def extract_merged_axtree(page: playwright.sync_api.Page):
+def extract_merged_axtree(page: playwright.sync_api.Page) -> dict[str, Any]:
     """
     Extracts the merged AXTree of a Playwright page (main document and iframes AXTrees merged) using Chrome DevTools Protocol.
 
@@ -549,7 +555,7 @@ def extract_merged_axtree(page: playwright.sync_api.Page):
     cdp = page.context.new_cdp_session(page)
 
     # merge all AXTrees into one
-    merged_axtree = {"nodes": []}
+    merged_axtree: dict[str, list[dict[str, Any]]] = {"nodes": []}
     for ax_tree in frame_axtrees.values():
         merged_axtree["nodes"].extend(ax_tree["nodes"])
         # connect each iframe node to the corresponding AXTree root node
@@ -581,7 +587,7 @@ def extract_merged_axtree(page: playwright.sync_api.Page):
     return merged_axtree
 
 
-def extract_focused_element_bid(page: playwright.sync_api.Page):
+def extract_focused_element_bid(page: playwright.sync_api.Page) -> str:
     # this JS code will dive through ShadowDOMs
     extract_focused_element_with_bid_script = """\
 () => {

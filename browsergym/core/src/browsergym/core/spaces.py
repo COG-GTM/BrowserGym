@@ -1,18 +1,18 @@
 """Borrowed from https://github.com/Farama-Foundation/miniwob-plusplus/blob/553daee55ea0b2cc32b181a474083ab4cad782a1/miniwob/spaces.py"""
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from gymnasium.spaces import Space
 from numpy.typing import NDArray
 
 
-class Unicode(Space):
+class Unicode(Space[str]):
     """
     A space representing a unicode string.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     def contains(self, x: Any) -> bool:
@@ -29,12 +29,12 @@ class Unicode(Space):
         return isinstance(other, Unicode)
 
 
-class Float(Space):
+class Float(Space[float]):
     """
     A space representing a float.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     def contains(self, x: Any) -> bool:
@@ -50,12 +50,12 @@ class Float(Space):
         return isinstance(other, Float)
 
 
-class Integer(Space):
+class Integer(Space[int]):
     """
     A space representing an integer.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     def contains(self, x: Any) -> bool:
@@ -71,7 +71,7 @@ class Integer(Space):
         return isinstance(other, Integer)
 
 
-class AnyDict(Space):
+class AnyDict(Space[dict[str, Any]]):
     """A space representing an arbitrary dictionary object."""
 
     def contains(self, x: Any) -> bool:
@@ -88,7 +88,7 @@ class AnyDict(Space):
         return isinstance(other, AnyDict)
 
 
-class Anything(Space):
+class Anything(Space[Any]):
     """A space representing an arbitrary dictionary object."""
 
     def contains(self, x: Any) -> bool:
@@ -104,7 +104,13 @@ class Anything(Space):
 class AnyBox(Space[NDArray[Any]]):
     """A space representing an arbitrary dictionary object."""
 
-    def __init__(self, low, high, shape, dtype):
+    def __init__(
+        self,
+        low: float,
+        high: float,
+        shape: tuple[int, ...],
+        dtype: type[np.generic] | np.dtype[Any],
+    ) -> None:
         super().__init__(shape, dtype)
         self.low = low
         self.high = high
@@ -117,10 +123,12 @@ class AnyBox(Space[NDArray[Any]]):
             except (ValueError, TypeError):
                 return False
 
+        # always set in __init__
+        shape = cast(tuple[int, ...], self.shape)
         return bool(
             np.can_cast(x.dtype, self.dtype)
-            and len(x.shape) == len(self.shape)
-            and all([dim in (xdim, -1) for xdim, dim in zip(x.shape, self.shape)])
+            and len(x.shape) == len(shape)
+            and all([dim in (xdim, -1) for xdim, dim in zip(x.shape, shape)])
             and np.all(x >= self.low)
             and np.all(x <= self.high)
         )
