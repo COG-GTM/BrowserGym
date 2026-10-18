@@ -160,7 +160,7 @@
                 .replace(/'/g, "&#039;");
         }
 
-        function addChatMessage(role, msg) {
+        function addChatMessage(role, timeString, msg) {
             const chatBody = document.getElementById('chatBody');
             const chatDebug = document.getElementById('chatDebug');
             const msgContainer = document.createElement('div');
@@ -181,7 +181,14 @@
                     msgContainer.appendChild(text);
                     chatBody.appendChild(msgContainer);
                     break;
+                case "user_image":
+                    text.className = 'user-message';
+                    text.innerHTML = `<img src="${escapeHtml(msg)}">`;
+                    msgContainer.appendChild(text);
+                    chatBody.appendChild(msgContainer);
+                    break;
                 case "assistant":
+                case "infeasible":
                     text.className = 'assistant-message';
                     msgContainer.appendChild(assistant_img); // Add the image to the message container
                     msgContainer.appendChild(text);
@@ -216,11 +223,11 @@
 
         const inputBox = document.getElementById('inputBox');
 
-        function send_msg(msg) {
+        async function send_msg(msg) {
             if (msg.trim()) {
-                send_user_message(msg);
-                addChatMessage('user', msg);
                 inputBox.value = '';
+                const strings = await send_user_message(msg);
+                addChatMessage(strings[0], strings[1], strings[2]);
             }
         }
 

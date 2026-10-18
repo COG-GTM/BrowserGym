@@ -62,7 +62,10 @@ class Chat:
         if role in ("user", "user_image", "assistant", "infeasible"):
             self.messages.append({"role": role, "timestamp": utc_time, "message": msg})
         timestamp = time.strftime("%H:%M:%S", time.localtime(utc_time))
-        self.page.evaluate(f"addChatMessage({repr(role)}, {repr(timestamp)}, {repr(msg)});")
+        self.page.evaluate(
+            "([role, timestamp, msg]) => addChatMessage(role, timestamp, msg);",
+            [role, timestamp, msg],
+        )
 
     def wait_for_user_message(self):
         logger.info("Waiting for message from user...")
