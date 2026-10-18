@@ -92,6 +92,10 @@ function semanticTailwindColors(theme) {
   return out;
 }
 
+// Same rule as side.css: [data-theme="dark"] forces dark; otherwise follow the OS unless [data-theme="light"] forces light.
+const DARK_EXPLICIT = '&:where([data-theme="dark"], [data-theme="dark"] *)';
+const DARK_SYSTEM = '&:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *)';
+
 export function tailwindTheme(m) {
   const colors = { white: m.palette.white, black: m.palette.black };
   for (const [g, scale] of Object.entries(m.palette)) if (typeof scale === 'object') colors[g] = { ...scale };
@@ -99,7 +103,7 @@ export function tailwindTheme(m) {
   const mapObj = (o, f) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, f(v, k)]));
   const splitStack = (s) => s.split(/,\s*/).map((x) => x.replace(/^"|"$/g, ''));
   return {
-    darkMode: ['selector', '[data-theme="dark"]'],
+    darkMode: ['variant', [`@media (prefers-color-scheme: dark) { ${DARK_SYSTEM} }`, DARK_EXPLICIT]],
     theme: {
       extend: {
         colors,
@@ -127,7 +131,7 @@ export const tailwindEsm = (m) =>
 export const tailwindDts = () => `/* ${HEADER} */
 type ColorValue = string | { [key: string]: ColorValue };
 export interface SideTailwindPreset {
-  darkMode: ['selector', string];
+  darkMode: ['variant', string[]];
   theme: {
     extend: {
       colors: Record<string, ColorValue>;
@@ -165,7 +169,7 @@ export function tailwindV4Css(m) {
     inline.push(`--color-${parts.map(kebab).join('-')}: var(${cssVarName(['color', ...parts])});`);
   }
   for (const k of Object.keys(m.themes.light.shadows)) inline.push(`--shadow-${k}: var(${cssVarName(['shadow', k])});`);
-  return `/* ${HEADER}\n * Tailwind CSS v4: @import "tailwindcss"; @import "@side/design-tokens/css"; @import "@side/design-tokens/tailwind/theme.css"; */\n\n${block('@theme', lines)}\n\n${block('@theme inline', inline)}\n`;
+  return `/* ${HEADER}\n * Tailwind CSS v4: @import "tailwindcss"; @import "@side/design-tokens/css"; @import "@side/design-tokens/tailwind/theme.css"; */\n\n${block('@custom-variant dark', [`${DARK_EXPLICIT} { @slot; }`, `@media (prefers-color-scheme: dark) { ${DARK_SYSTEM} { @slot; } }`])}\n\n${block('@theme', lines)}\n\n${block('@theme inline', inline)}\n`;
 }
 
 // ---------- React Native ----------

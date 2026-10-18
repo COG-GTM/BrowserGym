@@ -56,6 +56,8 @@ test('Tailwind preset: CJS and ESM builds are identical and theme-aware', async 
   assert.deepEqual(fontSize.md, ['1rem', { lineHeight: '1.5rem' }]);
   assert.equal(spacing.lg, '1.5rem');
   assert.equal(boxShadow.md, 'var(--side-shadow-md)');
+  assert.equal(cjs.darkMode[0], 'variant');
+  assert.match(cjs.darkMode[1].join('\n'), /prefers-color-scheme: dark[\s\S]*not\(\[data-theme="light"\]\)[\s\S]*\[data-theme="dark"\]/);
   const css = read('dist/css/side.css');
   for (const m of JSON.stringify(cjs).matchAll(/var\((--side-[\w-]+)\)/g)) assert.ok(css.includes(`${m[1]}:`), `${m[1]} not defined in side.css`);
 });
@@ -64,6 +66,7 @@ test('Tailwind v4 theme.css only references defined variables', () => {
   const v4 = read('dist/tailwind/theme.css');
   const css = read('dist/css/side.css');
   assert.match(v4, /@theme inline/);
+  assert.match(v4, /@custom-variant dark \{[\s\S]*\[data-theme="dark"\][\s\S]*prefers-color-scheme: dark[\s\S]*not\(\[data-theme="light"\]\)/);
   for (const m of v4.matchAll(/var\((--side-[\w-]+)\)/g)) assert.ok(css.includes(`${m[1]}:`), `${m[1]} not defined`);
 });
 

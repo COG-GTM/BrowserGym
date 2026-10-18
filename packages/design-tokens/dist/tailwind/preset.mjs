@@ -3,8 +3,11 @@
 /** @type {import('./preset').SideTailwindPreset} */
 const preset = {
   "darkMode": [
-    "selector",
-    "[data-theme=\"dark\"]"
+    "variant",
+    [
+      "@media (prefers-color-scheme: dark) { &:where(:root:not([data-theme=\"light\"]), :root:not([data-theme=\"light\"]) *) }",
+      "&:where([data-theme=\"dark\"], [data-theme=\"dark\"] *)"
+    ]
   ],
   "theme": {
     "extend": {
