@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import MISSING, dataclass, field, fields
 from typing import Any
 
 from browsergym.core.action.base import AbstractActionSet
@@ -20,28 +21,42 @@ def default_obs_preprocessor(obs: dict) -> dict:
 
 
 DEFAULT_ACTION_SET: AbstractActionSet = HighLevelActionSet()
-DEFAULT_OBS_PREPROCESSOR: callable = default_obs_preprocessor
+DEFAULT_OBS_PREPROCESSOR: Callable[[dict], Any] = default_obs_preprocessor
 
 
 @dataclass
 class AgentInfo:
-    think: str = None
-    chat_messages: list = None
+    think: str | None = None
+    chat_messages: list | None = None
     stats: dict = field(default_factory=dict)
     markdown_page: str = ""
     html_page: str = ""
-    extra_info: dict = None
+    extra_info: dict | None = None
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: str) -> Any:
         return getattr(self, key)
 
-    def __contains__(self, key):
+    def __setitem__(self, key: str, value: Any) -> None:
+        setattr(self, key, value)
+
+    def __contains__(self, key: str) -> bool:
         return hasattr(self, key)
 
-    def pop(self, key, default=None):
+    def __setstate__(self, state: dict) -> None:
+        # objects pickled before a field was introduced get its default value
+        self.__dict__.update(state)
+        for f in fields(self):
+            if f.name not in self.__dict__:
+                if f.default_factory is not MISSING:
+                    self.__dict__[f.name] = f.default_factory()
+                else:
+                    self.__dict__[f.name] = f.default
+
+    def pop(self, key: str, default: Any = None) -> Any:
+        # dict-like read access; attributes are kept (AgentInfo has a fixed set of fields)
         return getattr(self, key, default)
 
-    def get(self, key, default=None):
+    def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)
 
 

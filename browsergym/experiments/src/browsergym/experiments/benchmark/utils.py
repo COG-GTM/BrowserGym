@@ -2,7 +2,6 @@ import logging
 import multiprocessing as mp
 import os
 import traceback
-import typing
 from typing import Literal
 
 import numpy as np
@@ -18,7 +17,7 @@ def make_env_args_list_from_workarena_curriculum(
     max_steps: int,
     curriculum_type: Literal["human", "agent"],
     seeds_l1: int = 10,
-):
+) -> list[EnvArgs]:
     """
     Returns a WorkArena predefined task curriculum (e.g., task and seed combination).
     """
@@ -49,8 +48,8 @@ def make_env_args_list_from_repeat_tasks(
     max_steps: int,
     n_repeats: int,
     seeds_rng: np.random.RandomState,
-    viewport=None,
-):
+    viewport: dict | None = None,
+) -> list[EnvArgs]:
     """
     Generates a list of `len(task_list)` time `n_repeats` environments arguments, using randomly generated seeds.
     """
@@ -77,7 +76,7 @@ def make_env_args_list_from_repeat_tasks(
 
 def make_env_args_list_from_fixed_seeds(
     task_list: list[str], max_steps: int, fixed_seeds: list[int], n_repeats: int = 1
-):
+) -> list[EnvArgs]:
     """
     Generates a list of `len(task_list)` time `n_repeats` environments arguments, using randomly generated seeds.
     """
@@ -103,7 +102,7 @@ def make_env_args_list_from_fixed_seeds(
     return env_args_list
 
 
-def prepare_backend(backend: str):
+def prepare_backend(backend: str) -> None:
     match backend:
         case "miniwob":
             # register environments
@@ -122,8 +121,8 @@ def prepare_backend(backend: str):
             default_instance = WebArenaInstance()
             default_instance.full_reset()
 
-            logging.info(
-                f"Initiating WebArena instance warm-up. Some tasks will be pre-loaded (massaged) to trigger some caching mechanisms and make the server more responsive."
+            logger.info(
+                "Initiating WebArena instance warm-up. Some tasks will be pre-loaded (massaged) to trigger some caching mechanisms and make the server more responsive."
             )
             massage_tasks(
                 [
@@ -151,8 +150,8 @@ def prepare_backend(backend: str):
             default_instance = VisualWebArenaInstance()
             default_instance.full_reset()
 
-            logging.info(
-                f"Initiating VisualWebArena instance warm-up. Some tasks will be pre-loaded (massaged) to trigger some caching mechanisms and make the server more responsive."
+            logger.info(
+                "Initiating VisualWebArena instance warm-up. Some tasks will be pre-loaded (massaged) to trigger some caching mechanisms and make the server more responsive."
             )
             massage_tasks(
                 [
@@ -198,9 +197,10 @@ def prepare_backend(backend: str):
             # pre-download all weblinx files
             cache_dir = os.environ.get("BROWSERGYM_WEBLINX_CACHE_DIR", None)
 
-            assert (
-                cache_dir
-            ), f"Environment variable BROWSERGYM_WEBLINX_CACHE_DIR is missing or empty, required to prepare the weblinx backend."
+            if not cache_dir:
+                raise ValueError(
+                    "Environment variable BROWSERGYM_WEBLINX_CACHE_DIR is missing or empty, required to prepare the weblinx backend."
+                )
 
             all_tasks = []
             for split in ("train", "valid", "test_iid"):
@@ -212,24 +212,29 @@ def prepare_backend(backend: str):
             raise NotImplementedError(f"Unknown benchmark backend {repr(backend)}")
 
 
-def massage_tasks(task_ids: list[str], max_retries: int = 1, timeout: int = 60):
+def massage_tasks(task_ids: list[str], max_retries: int = 1, timeout: int = 60) -> None:
     for i, task_id in enumerate(task_ids):
-        logger.info(f"Massaging task {i + 1} / {len(task_ids)}: {task_id}")
+        logger.info("Massaging task %d / %d: %s", i + 1, len(task_ids), task_id)
         for retries in range(max_retries + 1):
             outcome, err_msg = massage_task_within_subprocess(task_id=task_id, timeout=timeout)
             if outcome == "success":
                 break
             if retries < max_retries:
                 logger.info(
-                    f"Massage resulted in {outcome}, retrying ({retries + 1} / {max_retries} retries)"
+                    "Massage resulted in %s, retrying (%d / %d retries)",
+                    outcome,
+                    retries + 1,
+                    max_retries,
                 )
             else:
                 logger.warning(
-                    f"Massage unsuccessful after {retries} retries, skipping. Last error message: {err_msg}"
+                    "Massage unsuccessful after %d retries, skipping. Last error message: %s",
+                    retries,
+                    err_msg,
                 )
 
 
-def run_massage(outcome_queue: mp.Queue, task_id: str):
+def run_massage(outcome_queue: mp.Queue, task_id: str) -> None:
     import gymnasium as gym
 
     gym_id = f"browsergym/{task_id}"
@@ -238,7 +243,7 @@ def run_massage(outcome_queue: mp.Queue, task_id: str):
     # check if action space exists and is compatible with "noop()"
     try:
         env.unwrapped.action_mapping(no_action)
-    except:
+    except Exception:
         no_action = ""  # fallback plan
     # run massage
     try:
@@ -255,7 +260,7 @@ def run_massage(outcome_queue: mp.Queue, task_id: str):
 
 def massage_task_within_subprocess(
     task_id: str, timeout: int, kill_timeout: int = 10
-) -> typing.Tuple[str, str]:
+) -> tuple[str, str | None]:
     """Massages a BrowserGym task (reset, noop, noop) inside a subprocess to monitor execution
     times and kill the process after a timeout.
 
@@ -277,7 +282,8 @@ def massage_task_within_subprocess(
         if process.is_alive():
             # if the process is still alive after the kill
             logger.warning(
-                f"Massage sub-process still alive {kill_timeout} seconds after kill(), you might have a zombie process now."
+                "Massage sub-process still alive %d seconds after kill(), you might have a zombie process now.",
+                kill_timeout,
             )
     else:
         outcome = queue.get_nowait()

@@ -3,7 +3,7 @@ import logging
 import random
 import typing
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Literal
 
 import pandas as pd
 from dataclasses_json import DataClassJsonMixin, config
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class HighLevelActionSetArgs(DataClassJsonMixin):
-    subsets: tuple[HighLevelActionSet.ActionSubset] = field(
+    subsets: tuple[HighLevelActionSet.ActionSubset, ...] = field(
         metadata=config(
             encoder=lambda x: list(x),
             decoder=lambda x: tuple(x),
@@ -34,14 +34,14 @@ class HighLevelActionSetArgs(DataClassJsonMixin):
     multiaction: bool = False
     strict: bool = False
     retry_with_force: bool = False
-    demo_mode: Optional[Literal["off", "default", "all_blue", "only_visible_elements"]] = None
+    demo_mode: Literal["off", "default", "all_blue", "only_visible_elements"] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        # needs to be hashable for AgentLab when uniquely identifying agents
         if isinstance(self.subsets, list):
-            """Needs to be hashable for AgentLab when uniquely identifying agents."""
             self.subsets = tuple(self.subsets)
 
-    def make_action_set(self):
+    def make_action_set(self) -> HighLevelActionSet:
         return HighLevelActionSet(
             subsets=self.subsets,
             custom_actions=None,
@@ -65,7 +65,7 @@ class Benchmark(DataClassJsonMixin):
     supports_parallel_seeds: bool
     env_args_list: list[EnvArgs]
     backends: list[BenchmarkBackend]
-    task_metadata: Optional[pd.DataFrame] = field(
+    task_metadata: pd.DataFrame | None = field(
         default_factory=lambda: None,
         metadata=config(
             encoder=lambda df: df.to_dict(orient="records") if df is not None else None,
@@ -73,16 +73,16 @@ class Benchmark(DataClassJsonMixin):
         ),
     )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # if no metadata is present, generate a dataframe with single "task_name" column
         if self.task_metadata is None:
-            unique_task_names = list(set([env_args.task_name for env_args in self.env_args_list]))
+            unique_task_names = list({env_args.task_name for env_args in self.env_args_list})
             self.task_metadata = pd.DataFrame(
                 [{"task_name": task_name} for task_name in unique_task_names]
             )
         # make sure all tasks in env_args are in the metadata
         metadata_tasks = list(self.task_metadata["task_name"])
-        assert all([env_args.task_name in metadata_tasks for env_args in self.env_args_list])
+        assert all(env_args.task_name in metadata_tasks for env_args in self.env_args_list)
         # check backend values
         for backend in self.backends:
             if backend not in typing.get_args(BenchmarkBackend):
@@ -90,13 +90,13 @@ class Benchmark(DataClassJsonMixin):
                     f"Unknown Benchmark backend {repr(backend)}. Available backends: {typing.get_args(BenchmarkBackend)}"
                 )
 
-    def prepare_backends(self):
+    def prepare_backends(self) -> None:
         for backend in self.backends:
-            logger.info(f"Preparing {backend} backend...")
+            logger.info("Preparing %s backend...", backend)
             prepare_backend(backend)
-            logger.info(f"{backend} backend ready")
+            logger.info("%s backend ready", backend)
 
-    def subset_from_split(self, split: Literal["train", "valid", "test"]):
+    def subset_from_split(self, split: Literal["train", "valid", "test"]) -> "Benchmark":
         split_column = "browsergym_split"
 
         # check for a split column in metadata
@@ -118,9 +118,9 @@ class Benchmark(DataClassJsonMixin):
     def subset_from_list(
         self,
         task_list: list[str],
-        benchmark_name_suffix: Optional[str] = "custom",
-        split: Optional[str] = None,
-    ):
+        benchmark_name_suffix: str | None = "custom",
+        split: str | None = None,
+    ) -> "Benchmark":
         """Create a sub-benchmark containing only the specified tasks.
 
         Args:
@@ -170,12 +170,12 @@ class Benchmark(DataClassJsonMixin):
 
         return sub_benchmark
 
-    def subset_from_glob(self, column, glob):
+    def subset_from_glob(self, column: str, glob: str) -> "Benchmark":
         subset = self.subset_from_regexp(column, regexp=fnmatch.translate(glob))
         subset.name = f"{self.name}[{column}={glob}]"
         return subset
 
-    def subset_from_regexp(self, column, regexp):
+    def subset_from_regexp(self, column: str, regexp: str) -> "Benchmark":
         # extract the filtered task_name subset
         task_name_subset = task_list_from_metadata(self.task_metadata, {column: regexp})
 
@@ -194,10 +194,11 @@ class Benchmark(DataClassJsonMixin):
             task_metadata=self.task_metadata,
         )
 
-    def subset_from_task_ratio(self, ratio, seed):
+    def subset_from_task_ratio(self, ratio: float, seed: int) -> "Benchmark":
         """Get a random subset of the tasks given a ratio and seed."""
         rng = random.Random(seed)
-        task_names = list(set([env_args.task_name for env_args in self.env_args_list]))
+        # sorted for a deterministic subset (set iteration order depends on string hashing)
+        task_names = sorted({env_args.task_name for env_args in self.env_args_list})
         rng.shuffle(task_names)
         num_tasks = int(len(task_names) * ratio)
         task_name_subset = task_names[:num_tasks]
@@ -218,13 +219,13 @@ class Benchmark(DataClassJsonMixin):
 
     def dependency_graph_over_tasks(self) -> dict[str, list[str]]:
         # recover all unique task_names present in the benchmark
-        task_names = list(set([env_args.task_name for env_args in self.env_args_list]))
+        task_names = list({env_args.task_name for env_args in self.env_args_list})
 
         # if "depends_on" column is missing, raise a warning and deal with it
         # (we don't want the "depends_on" column to be mandatory)
         if "depends_on" not in self.task_metadata.columns:
             logger.warning(
-                f'This benchmark does not provide a dependency graph (missing a "depends_on" column in task metadata). Assuming no task dependencies.'
+                'This benchmark does not provide a dependency graph (missing a "depends_on" column in task metadata). Assuming no task dependencies.'
             )
             zero_dependencies = {task_name: [] for task_name in task_names}
             return zero_dependencies

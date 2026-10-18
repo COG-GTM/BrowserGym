@@ -12,12 +12,12 @@ import traceback
 import uuid
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from dataclasses import asdict, dataclass, field, is_dataclass
+from collections.abc import Callable, Iterator
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, MISSING
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, BinaryIO
 
-from browsergym.core.env import BrowserEnv
 import gymnasium as gym
 import numpy as np
 from dataclasses_json import DataClassJsonMixin
@@ -26,30 +26,166 @@ from tqdm import tqdm
 
 from browsergym.core.action.parsers import highlevel_action_parser
 from browsergym.core.chat import Chat
+from browsergym.core.env import BrowserEnv
 
 from .agent import Agent
 from .utils import count_messages_token, count_tokens
 
 logger = logging.getLogger(__name__)
 
-SEED_MAX = 2 ^ 32  # arbitrary max value (exclusive), seems large enough
+# NOTE: `^` is bitwise XOR, so this evaluates to 34. Kept as-is so that randomly drawn task seeds
+# stay reproducible with results produced by earlier versions.
+SEED_MAX = 2 ^ 32  # arbitrary max value (exclusive)
+
+ObsPreprocessor = Callable[[dict], Any]
+
+
+class ExperimentSaveError(OSError):
+    """Raised when an experiment artifact (step info, summary, arguments...) cannot be saved."""
+
+
+class ExperimentLoadError(OSError):
+    """Raised when a saved experiment artifact exists but cannot be read (e.g., truncated file)."""
+
+
+def _write_temp(path: Path, write_fn: Callable[[BinaryIO], None]) -> Path:
+    """Write a temporary sibling of `path` with `write_fn` and return its path."""
+    if not path.parent.is_dir():
+        raise ExperimentSaveError(
+            f"Cannot save {path.name!r}: directory {str(path.parent)!r} does not exist."
+        )
+    tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        # mode 0o666 filtered by the current umask, same as a regular `open(path, "w")`
+        fd = os.open(
+            tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o666
+        )
+        with os.fdopen(fd, "wb") as f:
+            write_fn(f)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException as e:
+        tmp_path.unlink(missing_ok=True)
+        if isinstance(e, Exception):
+            raise ExperimentSaveError(
+                f"Failed to save {str(path)!r}: {type(e).__name__}: {e}"
+            ) from e
+        raise
+    return tmp_path
+
+
+class _StagedWrites:
+    """Write a group of files atomically: each file is first written to a temporary sibling, and
+    the temporary files are renamed into place only once all of them were written successfully.
+    If any write fails, no target file is modified and the temporary files are removed."""
+
+    def __init__(self) -> None:
+        self._staged: list[tuple[Path, Path]] = []
+
+    def add(self, path: str | Path, write_fn: Callable[[BinaryIO], None]) -> None:
+        path = Path(path)
+        self._staged.append((_write_temp(path, write_fn), path))
+
+    def __enter__(self) -> "_StagedWrites":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            if exc_type is None:
+                for tmp_path, path in self._staged:
+                    try:
+                        os.replace(tmp_path, path)
+                    except OSError as e:
+                        raise ExperimentSaveError(
+                            f"Failed to save {str(path)!r}: {type(e).__name__}: {e}"
+                        ) from e
+        finally:
+            for tmp_path, _ in self._staged:
+                tmp_path.unlink(missing_ok=True)
+
+
+def _atomic_write(path: str | Path, write_fn: Callable[[BinaryIO], None]) -> None:
+    """Atomically write a file: `write_fn` writes to a temporary file in the same directory,
+    which is then renamed to `path`. Readers never observe a partially written file, and a
+    failed write leaves any previous version of `path` untouched.
+
+    Raises:
+        ExperimentSaveError: if the directory is missing or the write fails.
+    """
+    with _StagedWrites() as staged:
+        staged.add(path, write_fn)
+
+
+def _text_writer(text: str) -> Callable[[BinaryIO], None]:
+    return lambda f: f.write(text.encode("utf-8"))
+
+
+def _json_writer(obj: Any, **json_kwargs) -> Callable[[BinaryIO], None]:
+    return lambda f: f.write(json.dumps(obj, **json_kwargs).encode("utf-8"))
+
+
+def _pickle_writer(
+    path: str | Path, obj: Any, compress: bool = False
+) -> Callable[[BinaryIO], None]:
+    def write(f: BinaryIO) -> None:
+        if compress:
+            # keep the original (non-temporary) file name in the gzip header
+            name = Path(path).name.removesuffix(".gz")
+            with gzip.GzipFile(filename=name, mode="wb", fileobj=f) as gz:
+                pickle.dump(obj, gz)
+        else:
+            pickle.dump(obj, f)
+
+    return write
+
+
+def _image_writer(array: np.ndarray) -> Callable[[BinaryIO], None]:
+    return lambda f: Image.fromarray(array).save(f, format="PNG")
+
+
+def _atomic_write_text(path: str | Path, text: str) -> None:
+    _atomic_write(path, _text_writer(text))
+
+
+def _atomic_write_json(path: str | Path, obj: Any, **json_kwargs) -> None:
+    _atomic_write(path, _json_writer(obj, **json_kwargs))
+
+
+def _atomic_write_pickle(path: str | Path, obj: Any, compress: bool = False) -> None:
+    _atomic_write(path, _pickle_writer(path, obj, compress=compress))
+
+
+def _fill_missing_fields(obj: Any) -> None:
+    """Set default values for dataclass fields absent from an unpickled object (e.g., objects
+    saved by an older version, before a field was introduced)."""
+    for f in fields(obj):
+        if f.name in obj.__dict__:
+            continue
+        if f.default is not MISSING:
+            obj.__dict__[f.name] = f.default
+        elif f.default_factory is not MISSING:
+            obj.__dict__[f.name] = f.default_factory()
 
 
 @dataclass
 class EnvArgs(DataClassJsonMixin):
     task_name: str
-    task_seed: Optional[int] = None
-    max_steps: Optional[int] = None
+    task_seed: int | None = None
+    max_steps: int | None = None
     headless: bool = True
     record_video: bool = False
     wait_for_user_message: bool = False
-    viewport: Optional[dict] = None  # use default value from BrowserGym
-    slow_mo: Optional[int] = None  # use default value from BrowserGym
-    storage_state: Optional[str | Path | dict] = None
-    task_kwargs: Optional[dict] = None  # use default value from BrowserGym
+    viewport: dict | None = None  # use default value from BrowserGym
+    slow_mo: int | None = None  # use default value from BrowserGym
+    storage_state: str | Path | dict | None = None
+    task_kwargs: dict | None = None  # use default value from BrowserGym
 
     def make_env(
-        self, action_mapping, exp_dir, exp_task_kwargs: dict = {}, use_raw_page_output=False
+        self,
+        action_mapping: Callable[[str], str] | None,
+        exp_dir: str | Path,
+        exp_task_kwargs: dict | None = None,
+        use_raw_page_output: bool = False,
     ) -> BrowserEnv:
         """
         Instantiates the BrowserGym environment corresponding to the arguments (with some tweaks).
@@ -62,6 +198,7 @@ class EnvArgs(DataClassJsonMixin):
         Returns:
             env: the gym environment.
         """
+        exp_dir = Path(exp_dir)
         extra_kwargs = {}
         if self.record_video:
             extra_kwargs["record_video_dir"] = exp_dir
@@ -99,36 +236,32 @@ class EnvArgs(DataClassJsonMixin):
 class AbstractAgentArgs(ABC):
     """A template class that defines the required signature of an agent's arguments."""
 
-    agent_name: str = None
+    agent_name: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.agent_name is None:
             self.agent_name = self.__class__.__name__
 
-    def prepare(self):
+    def prepare(self) -> None:
         """Prepare the agent's LLM models before running the experiment."""
-        pass
 
-    def close(self):
+    def close(self) -> None:
         """Close the agent's LLM models after running the experiment."""
-        pass
 
     @abstractmethod
     def make_agent(self) -> Agent:
         """Comply the experiments.loop API for instantiating the agent."""
 
 
-def save_package_versions(exp_dir: Path):
+def save_package_versions(exp_dir: str | Path) -> None:
     """Save the versions of the installed packages in the experiment directory."""
     python_dists = "\n".join(
         sorted(
-            [
-                f'{dist.metadata["Name"]}=={dist.metadata["Version"]}'
-                for dist in importlib.metadata.distributions()
-            ]
+            f'{dist.metadata["Name"]}=={dist.metadata["Version"]}'
+            for dist in importlib.metadata.distributions()
         )
     )
-    (exp_dir / "package_versions.txt").write_text(python_dists)
+    _atomic_write_text(Path(exp_dir) / "package_versions.txt", python_dists)
 
 
 @dataclass
@@ -140,6 +273,10 @@ class StepTimestamps:
     env_stop: float = 0
     agent_start: float = 0
     agent_stop: float = 0
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        _fill_missing_fields(self)
 
 
 @dataclass
@@ -172,19 +309,25 @@ class StepInfo:
         Timestamps of the different events during the episode.
     """
 
-    step: int = None
-    obs: dict = None
+    step: int | None = None
+    obs: dict | None = None
     reward: float = 0
-    raw_reward: float = 0
-    terminated: bool = None
-    truncated: bool = None
-    action: str = None
+    raw_reward: float | None = 0
+    terminated: bool | None = None
+    truncated: bool | None = None
+    action: str | None = None
     agent_info: dict = field(default_factory=dict)
-    stats: dict = None
+    stats: dict | None = None
     profiling: StepTimestamps = field(default_factory=StepTimestamps)
-    task_info: dict = None
+    task_info: dict | None = None
 
-    def from_step(self, env: gym.Env, action: str, obs_preprocessor: callable):
+    # Note: the pickled format of StepInfo is its plain `__dict__` (no custom `__getstate__`),
+    # so that step files remain readable by older versions of browsergym-experiments.
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        _fill_missing_fields(self)
+
+    def from_step(self, env: gym.Env, action: str, obs_preprocessor: ObsPreprocessor | None):
         t = self.profiling
         t.env_start = time.time()
         self.obs, self.reward, self.terminated, self.truncated, env_info = env.step(action)
@@ -201,7 +344,7 @@ class StepInfo:
         if obs_preprocessor:
             self.obs = obs_preprocessor(self.obs)
 
-    def from_action(self, agent: Agent):
+    def from_action(self, agent: Agent) -> str | None:
         self.profiling.agent_start = time.time()
         self.action, self.agent_info = agent.get_action(self.obs.copy())
         self.profiling.agent_stop = time.time()
@@ -210,7 +353,7 @@ class StepInfo:
 
         return self.action
 
-    def from_reset(self, env: gym.Env, seed: int, obs_preprocessor: callable):
+    def from_reset(self, env: gym.Env, seed: int, obs_preprocessor: ObsPreprocessor | None):
         t = self.profiling
         t.env_start = time.time()
         self.obs, env_info = env.reset(seed=seed)
@@ -225,11 +368,10 @@ class StepInfo:
             self.obs = obs_preprocessor(self.obs)
 
     @property
-    def is_done(self):
-        return self.terminated or self.truncated
+    def is_done(self) -> bool:
+        return bool(self.terminated or self.truncated)
 
-    def make_stats(self):
-
+    def make_stats(self) -> None:
         stats = {
             f"n_token_{key}": count_tokens(val)
             for key, val in self.obs.items()
@@ -247,46 +389,81 @@ class StepInfo:
 
         self.stats = stats
 
-    def save_step_info(self, exp_dir, save_json=False, save_screenshot=True, save_som=False):
+    def save_step_info(
+        self,
+        exp_dir: str | Path,
+        save_json: bool = False,
+        save_screenshot: bool = True,
+        save_som: bool = False,
+    ) -> None:
+        """Save the step to `exp_dir/step_{step}.pkl.gz` (plus screenshots and goal object).
 
-        # special treatment for some of the observation fields
-        if self.obs is not None:
-            # save screenshots to separate files
-            screenshot = self.obs.pop("screenshot", None)
-            screenshot_som = self.obs.pop("screenshot_som", None)
+        Every file is written atomically (temporary file + rename), so a crash while saving never
+        leaves a truncated step file behind.
 
-            if save_screenshot and screenshot is not None:
-                img = Image.fromarray(screenshot)
-                img.save(exp_dir / f"screenshot_step_{self.step}.png")
+        Raises:
+            ExperimentSaveError: if any of the files cannot be written.
+        """
+        exp_dir = Path(exp_dir)
+        screenshot = screenshot_som = None
+        goal_object_popped, goal_object = False, None
+        try:
+            # all files of the step are committed together, so that a failure never pairs a new
+            # screenshot with an old step file (or vice versa)
+            with _StagedWrites() as staged:
+                # special treatment for some of the observation fields
+                if self.obs is not None:
+                    # save screenshots to separate files
+                    screenshot = self.obs.pop("screenshot", None)
+                    screenshot_som = self.obs.pop("screenshot_som", None)
 
-            if save_som and screenshot_som is not None:
-                img = Image.fromarray(screenshot_som)
-                img.save(exp_dir / f"screenshot_som_step_{self.step}.png")
+                    if save_screenshot and screenshot is not None:
+                        staged.add(
+                            exp_dir / f"screenshot_step_{self.step}.png", _image_writer(screenshot)
+                        )
 
-            # save goal object (which might contain images) to a separate file to save space
-            if self.obs.get("goal_object", False):
-                # save the goal object only once (goal should never change once setup)
-                goal_object_file = Path(exp_dir) / "goal_object.pkl.gz"
-                if not goal_object_file.exists():
-                    with gzip.open(goal_object_file, "wb") as f:
-                        pickle.dump(self.obs["goal_object"], f)
-                # set goal_object to a special placeholder value, which indicates it should be loaded from a separate file
-                self.obs["goal_object"] = None
+                    if save_som and screenshot_som is not None:
+                        staged.add(
+                            exp_dir / f"screenshot_som_step_{self.step}.png",
+                            _image_writer(screenshot_som),
+                        )
 
-        with gzip.open(exp_dir / f"step_{self.step}.pkl.gz", "wb") as f:
-            pickle.dump(self, f)
+                    # save goal object (which might contain images) to a separate file to save space
+                    if self.obs.get("goal_object", False):
+                        # save the goal object only once (goal should never change once setup)
+                        goal_object_file = exp_dir / "goal_object.pkl.gz"
+                        if not goal_object_file.exists():
+                            staged.add(
+                                goal_object_file,
+                                _pickle_writer(
+                                    goal_object_file, self.obs["goal_object"], compress=True
+                                ),
+                            )
+                        # set goal_object to a special placeholder value, which indicates it should be loaded from a separate file
+                        goal_object_popped, goal_object = True, self.obs["goal_object"]
+                        self.obs["goal_object"] = None
 
-        if save_json:
-            with open(exp_dir / "steps_info.json", "w") as f:
-                json.dump(self, f, indent=4, cls=DataclassJSONEncoder)
+                step_file = exp_dir / f"step_{self.step}.pkl.gz"
+                staged.add(step_file, _pickle_writer(step_file, self, compress=True))
 
-        if self.obs is not None:
-            # add the screenshots back to the obs
-            # why do we need this?
-            if screenshot is not None:
-                self.obs["screenshot"] = screenshot
-            if screenshot_som is not None:
-                self.obs["screenshot_som"] = screenshot_som
+                if save_json:
+                    staged.add(
+                        exp_dir / "steps_info.json",
+                        _json_writer(self, indent=4, cls=DataclassJSONEncoder),
+                    )
+        except ExperimentSaveError as e:
+            raise ExperimentSaveError(
+                f"Could not save step {self.step} in {str(exp_dir)!r}: {e}"
+            ) from e
+        finally:
+            # restore the in-memory observation, which callers may keep using
+            if self.obs is not None:
+                if screenshot is not None:
+                    self.obs["screenshot"] = screenshot
+                if screenshot_som is not None:
+                    self.obs["screenshot_som"] = screenshot_som
+                if goal_object_popped:
+                    self.obs["goal_object"] = goal_object
 
 
 @dataclass
@@ -322,25 +499,31 @@ class ExpArgs:
 
     agent_args: AbstractAgentArgs
     env_args: EnvArgs
-    exp_dir: str = None
-    exp_name: str = None
+    exp_dir: str | Path | None = None
+    exp_name: str | None = None
     enable_debug: bool = True
-    err_msg: str = None
-    stack_trace: str = None
-    order: int = None  # use to keep the original order the experiments were meant to be launched.
+    err_msg: str | None = None
+    stack_trace: str | None = None
+    order: int | None = (
+        None  # use to keep the original order the experiments were meant to be launched.
+    )
     logging_level: int = logging.INFO
     logging_level_stdout: int = logging.INFO
-    exp_id: str = None
-    depends_on: tuple[str] = ()
+    exp_id: str | None = None
+    depends_on: tuple[str, ...] = ()
     save_screenshot: bool = True
     save_som: bool = False
 
-    def make_id(self):
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        _fill_missing_fields(self)
+
+    def make_id(self) -> None:
         """Create a unique id for the experiment."""
         if self.exp_id is None:
             self.exp_id = str(uuid.uuid4())
 
-    def prepare(self, exp_root):
+    def prepare(self, exp_root: str | Path) -> None:
         """Prepare the experiment directory and save the experiment arguments.
 
         This enables inspecting experiments that are not run yet.
@@ -362,10 +545,9 @@ class ExpArgs:
         self._make_dir(exp_root)
 
         self.exp_dir.mkdir(parents=True, exist_ok=True)
-        with open(self.exp_dir / "exp_args.pkl", "wb") as f:
-            pickle.dump(self, f)
+        _atomic_write_pickle(self.exp_dir / "exp_args.pkl", self)
 
-    def _make_dir(self, exp_root):
+    def _make_dir(self, exp_root: str | Path) -> None:
         """Create a unique directory for the experiment."""
         date_str = self.exp_date.strftime("%Y-%m-%d_%H-%M-%S")
         exp_str = re.sub(
@@ -383,7 +565,7 @@ class ExpArgs:
 
     # TODO distinguish between agent error and environment or system error. e.g.
     # the parsing error of an action should not be re-run.
-    def run(self):
+    def run(self) -> None:
         """Run the experiment and save the results"""
 
         # start writing logs to run logfile
@@ -395,28 +577,28 @@ class ExpArgs:
         episode_info = []
         env, step_info, err_msg, stack_trace = None, None, None, None
         try:
-            logger.info(f"Running experiment {self.exp_name} in:\n  {self.exp_dir}")
+            logger.info("Running experiment %s in:\n  %s", self.exp_name, self.exp_dir)
             agent = self.agent_args.make_agent()
-            logger.debug(f"Agent created.")
+            logger.debug("Agent created.")
 
             env = self.env_args.make_env(
                 action_mapping=agent.action_set.to_python_code,
                 exp_dir=self.exp_dir,
             )
 
-            logger.debug(f"Environment created.")
+            logger.debug("Environment created.")
 
             step_info = StepInfo(step=0)
             episode_info = [step_info]
             step_info.from_reset(
                 env, seed=self.env_args.task_seed, obs_preprocessor=agent.obs_preprocessor
             )
-            logger.debug(f"Environment reset.")
+            logger.debug("Environment reset.")
 
             while not step_info.is_done:  # set a limit
-                logger.debug(f"Starting step {step_info.step}.")
+                logger.debug("Starting step %s.", step_info.step)
                 action = step_info.from_action(agent)
-                logger.debug(f"Agent chose action:\n {action}")
+                logger.debug("Agent chose action:\n %s", action)
 
                 if action is None:
                     # will end the episode after saving the step info.
@@ -425,21 +607,21 @@ class ExpArgs:
                 step_info.save_step_info(
                     self.exp_dir, save_screenshot=self.save_screenshot, save_som=self.save_som
                 )
-                logger.debug(f"Step info saved.")
+                logger.debug("Step info saved.")
 
                 _send_chat_info(env.unwrapped.chat, action, step_info.agent_info)
-                logger.debug(f"Chat info sent.")
+                logger.debug("Chat info sent.")
 
                 if action is None:
-                    logger.debug(f"Agent returned None action. Ending episode.")
+                    logger.debug("Agent returned None action. Ending episode.")
                     break
 
                 step_info = StepInfo(step=step_info.step + 1)
                 episode_info.append(step_info)
 
-                logger.debug(f"Sending action to environment.")
+                logger.debug("Sending action to environment.")
                 step_info.from_step(env, action, obs_preprocessor=agent.obs_preprocessor)
-                logger.debug(f"Environment stepped.")
+                logger.debug("Environment stepped.")
 
         except Exception as e:
             err_msg = f"Exception uncaught by agent or environment in task {self.env_args.task_name}.\n{type(e).__name__}:\n{e}"
@@ -448,7 +630,7 @@ class ExpArgs:
             self.err_msg = err_msg
             self.stack_trace = stack_trace
 
-            logger.warning(err_msg + "\n" + stack_trace)
+            logger.warning("%s\n%s", err_msg, stack_trace)
             if _is_debugging() and self.enable_debug:
                 logger.warning("Debug mode is enabled. Raising the error.")
                 raise
@@ -460,7 +642,7 @@ class ExpArgs:
                         self.exp_dir, save_screenshot=self.save_screenshot, save_som=self.save_som
                     )
             except Exception as e:
-                logger.error(f"Error while saving step info in the finally block: {e}")
+                logger.error("Error while saving step info in the finally block: %s", e)
             try:
                 if (
                     not err_msg
@@ -469,21 +651,21 @@ class ExpArgs:
                 ):
                     e = KeyboardInterrupt("Early termination??")
                     err_msg = f"Exception uncaught by agent or environment in task {self.env_args.task_name}.\n{type(e).__name__}:\n{e}"
-                logger.info(f"Saving summary info.")
+                logger.info("Saving summary info.")
                 self.save_summary_info(episode_info, self.exp_dir, err_msg, stack_trace)
             except Exception as e:
-                logger.error(f"Error while saving summary info in the finally block: {e}")
+                logger.error("Error while saving summary info in the finally block: %s", e)
             try:
                 if env is not None:
                     env.close()
             except Exception as e:
-                logger.error(f"Error while closing the environment in the finally block: {e}")
+                logger.error("Error while closing the environment in the finally block: %s", e)
             try:
                 self._unset_logger()  # stop writing logs to run logfile
             except Exception as e:
-                logger.error(f"Error while unsetting the logger in the finally block: {e}")
+                logger.error("Error while unsetting the logger in the finally block: %s", e)
 
-    def _set_logger(self):
+    def _set_logger(self) -> None:
         # output logging traces to a log file
         file_handler = logging.FileHandler(self.exp_dir / "experiment.log")
         file_handler.setLevel(self.logging_level)  # same level as console outputs
@@ -499,7 +681,7 @@ class ExpArgs:
         root_logger = logging.getLogger()
 
         # remove previous stream handlers
-        for handler in root_logger.handlers:
+        for handler in list(root_logger.handlers):
             if isinstance(handler, logging.StreamHandler):
                 root_logger.removeHandler(handler)
 
@@ -512,17 +694,18 @@ class ExpArgs:
 
         self.logging_file_handler = file_handler
 
-    def _unset_logger(self):
+    def _unset_logger(self) -> None:
         root_logger = logging.getLogger()
         root_logger.removeHandler(self.logging_file_handler)
+        self.logging_file_handler.close()
 
     def save_summary_info(
         self,
         episode_info: list[StepInfo],
-        exp_dir,
-        err_msg,
-        stack_trace,
-    ):
+        exp_dir: str | Path,
+        err_msg: str | None,
+        stack_trace: str | None,
+    ) -> None:
         # bring err from agent_info to the top level
         if err_msg is None:
             err_msg, stack_trace = _extract_err_msg(episode_info)
@@ -536,8 +719,8 @@ class ExpArgs:
 
         summary_info = dict(
             n_steps=len(episode_info) - 1,
-            cum_reward=sum([step.reward for step in episode_info]),
-            cum_raw_reward=sum([step.raw_reward for step in episode_info if step.raw_reward]),
+            cum_reward=sum(step.reward for step in episode_info),
+            cum_raw_reward=sum(step.raw_reward for step in episode_info if step.raw_reward),
             err_msg=err_msg,
             stack_trace=stack_trace,
         )
@@ -548,11 +731,10 @@ class ExpArgs:
             summary_info["terminated"] = episode_info[-1].terminated
             summary_info["truncated"] = episode_info[-1].truncated
 
-        with open(exp_dir / "summary_info.json", "w") as f:
-            json.dump(summary_info, f, indent=4)
+        _atomic_write_json(Path(exp_dir) / "summary_info.json", summary_info, indent=4)
 
 
-def _extract_err_msg(episode_info: list[StepInfo]):
+def _extract_err_msg(episode_info: list[StepInfo]) -> tuple[str | None, str | None]:
     """Extract the last error message from the episode info."""
     errors = [(None, None)]
     for step_info in episode_info:
@@ -565,7 +747,7 @@ def _extract_err_msg(episode_info: list[StepInfo]):
     return errors[-1]
 
 
-def _aggregate_episode_stats(episode_info: list[StepInfo]):
+def _aggregate_episode_stats(episode_info: list[StepInfo]) -> dict[str, Any]:
     """Aggregate StepInfo.stats across episodes.
 
     It will compute the sum and max of each value in the stats dict.
@@ -594,7 +776,7 @@ def _aggregate_episode_stats(episode_info: list[StepInfo]):
     return aggregated_stats
 
 
-def _is_debugging():
+def _is_debugging() -> bool:
     """Tells you if your code is currently running in debug mode."""
     return sys.gettrace() is not None
 
@@ -618,19 +800,19 @@ class ExpResult:
             combined)
     """
 
-    def __init__(self, exp_dir) -> None:
+    def __init__(self, exp_dir: str | Path) -> None:
         self.exp_dir = Path(exp_dir)
-        self._exp_args = None
-        self._steps_info = {}
-        self._summary_info = None
-        self._screenshots = {}
-        self._flat_exp_args = None
-        self._logs = None
+        self._exp_args: ExpArgs | None = None
+        self._steps_info: dict[int, StepInfo] = {}
+        self._summary_info: dict | None = None
+        self._screenshots: dict[tuple[int, bool], Image.Image] = {}
+        self._flat_exp_args: dict | None = None
+        self._logs: str | None = None
 
     @property
     def exp_args(self) -> ExpArgs:
         if self._exp_args is None:
-            with open(self.exp_dir / "exp_args.pkl", "rb") as f:
+            with (self.exp_dir / "exp_args.pkl").open("rb") as f:
                 self._exp_args = pickle.load(f)
                 # in case experiments were moved
                 self._exp_args.exp_dir = self.exp_dir
@@ -639,8 +821,16 @@ class ExpResult:
     def get_step_info(self, step: int) -> StepInfo:
         """Load the step info from the file and return it."""
         if self._steps_info.get(step, None) is None:
-            with gzip.open(self.exp_dir / f"step_{step}.pkl.gz", "rb") as f:
-                self._steps_info[step] = pickle.load(f)
+            step_file = self.exp_dir / f"step_{step}.pkl.gz"
+            try:
+                with gzip.open(step_file, "rb") as f:
+                    self._steps_info[step] = pickle.load(f)
+            except FileNotFoundError:
+                raise
+            except (OSError, EOFError, pickle.UnpicklingError) as e:
+                raise ExperimentLoadError(
+                    f"Step file {str(step_file)!r} is corrupted or truncated: {type(e).__name__}: {e}"
+                ) from e
             if self._steps_info[step].obs:
                 if "screenshot" not in self._steps_info[step].obs:
                     try:
@@ -679,11 +869,11 @@ class ExpResult:
     @property
     def summary_info(self) -> dict:
         if self._summary_info is None:
-            with open(self.exp_dir / "summary_info.json", "r") as f:
-                # if length is zero raise file not found error
-                if os.fstat(f.fileno()).st_size == 0:
-                    raise FileNotFoundError(f"summary_info.json is empty.")
-                self._summary_info = json.load(f)
+            summary_text = (self.exp_dir / "summary_info.json").read_text()
+            # if length is zero raise file not found error
+            if not summary_text:
+                raise FileNotFoundError("summary_info.json is empty.")
+            self._summary_info = json.loads(summary_text)
         return self._summary_info
 
     @property
@@ -697,8 +887,9 @@ class ExpResult:
         """
         steps = []
         for step_info in self.steps_info:
-            if "tape_segment" in step_info.agent_info["extra_info"]:
-                tape_segment = step_info.agent_info["extra_info"]["tape_segment"]
+            extra_info = step_info.agent_info.get("extra_info", None) or {}
+            if "tape_segment" in extra_info:
+                tape_segment = extra_info["tape_segment"]
             else:
                 tape_segment = self._create_tape_segment(step_info)
             steps += tape_segment
@@ -740,6 +931,9 @@ class ExpResult:
             )
 
         # extract action steps
+        # the final step of an episode carries no action
+        if step_info.action is None:
+            return tape_segment
         function_calls = highlevel_action_parser.parse_string(step_info.action, parse_all=True)
         for name, arguments in function_calls:
             tape_segment.append(
@@ -761,13 +955,15 @@ class ExpResult:
             )
         return tape_segment
 
-    def save_tape(self, filename: str = "tape.json"):
-        if os.path.exists(self.exp_dir / filename):
+    def save_tape(self, filename: str = "tape.json") -> None:
+        tape_file = self.exp_dir / filename
+        if tape_file.exists():
             raise FileExistsError(f"{filename} already exists in {self.exp_dir}")
-        with open(self.exp_dir / filename, "w") as f:
-            json.dump(self.tape, f, indent=4, ensure_ascii=False)
+        _atomic_write_json(
+            tape_file, self.tape, indent=4, ensure_ascii=False, cls=DataclassJSONEncoder
+        )
 
-    def get_screenshot(self, step: int, som=False) -> Image:
+    def get_screenshot(self, step: int, som: bool = False) -> Image.Image:
         key = (step, som)
         if self._screenshots.get(key, None) is None:
             file_name = f"screenshot_{'som_' if som else ''}step_{step}"
@@ -779,7 +975,7 @@ class ExpResult:
                     self._screenshots[key] = img.copy()
         return self._screenshots[key]
 
-    def get_screenshots(self, som=False):
+    def get_screenshots(self, som: bool = False) -> list[Image.Image | None]:
         files = list(self.exp_dir.glob("screenshot_step_*"))
         max_step = 0
         for file in files:
@@ -789,11 +985,11 @@ class ExpResult:
         return [self._screenshots.get((i, som), None) for i in range(max_step + 1)]
 
     @property
-    def screenshots(self):
+    def screenshots(self) -> list[Image.Image | None]:
         return self.get_screenshots(som=False)
 
     @property
-    def screenshots_som(self):
+    def screenshots_som(self) -> list[Image.Image | None]:
         return self.get_screenshots(som=True)
 
     @property
@@ -807,7 +1003,7 @@ class ExpResult:
 
     def get_exp_record(self) -> dict:
         """Return a dict with exp_args flattened and summary_info."""
-        record = {"exp_dir": self.exp_dir}
+        record: dict[str, Any] = {"exp_dir": self.exp_dir}
         try:
             record.update(self.flat_exp_args)
         except FileNotFoundError:
@@ -837,13 +1033,13 @@ class ExpResult:
         return self.exp_dir / "combined_video.mp4"
 
     @property
-    def logs(self):
+    def logs(self) -> str:
         if self._logs is None:
             self._logs = (self.exp_dir / "experiment.log").read_text()
         return self._logs
 
     @property
-    def status(self):
+    def status(self) -> str:
         """Return one of the following status:
         * "done": completed with no error
         * "error": completed with error
@@ -863,10 +1059,10 @@ class ExpResult:
         return "incomplete"
 
 
-EXP_RESULT_CACHE = {}
+EXP_RESULT_CACHE: dict[str, ExpResult] = {}
 
 
-def get_exp_result(exp_dir) -> ExpResult:
+def get_exp_result(exp_dir: str | Path) -> ExpResult:
     """Keep a cache of pre-loaded exp_results for faster loading"""
     exp_dir = str(exp_dir)  # make sure it's not a Path
     exp_result = EXP_RESULT_CACHE.get(exp_dir, None)
@@ -877,8 +1073,11 @@ def get_exp_result(exp_dir) -> ExpResult:
 
 
 def yield_all_exp_results(
-    savedir_base: str | Path, progress_fn=tqdm, load_hidden=False, use_cache=True
-):
+    savedir_base: str | Path | list[str | Path],
+    progress_fn: Callable | None = tqdm,
+    load_hidden: bool = False,
+    use_cache: bool = True,
+) -> Iterator[ExpResult]:
     """Recursively find all experiments from savedir_base folder.
 
     This will ignore all experiments that start with "_" or ".". use
@@ -898,7 +1097,7 @@ def yield_all_exp_results(
     for exp_args_path in exp_args_paths:
         exp_dir = exp_args_path.parent
         if not load_hidden:
-            if exp_dir.name.startswith("_") or exp_dir.name.startswith("."):
+            if exp_dir.name.startswith(("_", ".")):
                 continue
         if use_cache:
             yield get_exp_result(exp_dir)
@@ -907,26 +1106,30 @@ def yield_all_exp_results(
 
 
 class DataclassJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if is_dataclass(obj):
+    def default(self, obj: Any) -> Any:
+        if is_dataclass(obj) and not isinstance(obj, type):
             return asdict(obj)
         if isinstance(obj, np.integer):
             return int(obj)
         if isinstance(obj, np.floating):
             return float(obj)
+        if isinstance(obj, np.bool_):
+            return bool(obj)
         if isinstance(obj, np.ndarray):
             return obj.tolist()
+        if isinstance(obj, Path):
+            return str(obj)
         return super().default(obj)
 
 
-def _move_old_exp(exp_dir):
+def _move_old_exp(exp_dir: str | Path) -> None:
     """Move the old experiment directory to a new name."""
     exp_dir = Path(exp_dir)
     if exp_dir.exists():
         exp_dir.rename(exp_dir.with_name("_" + exp_dir.name))
 
 
-def _get_env_name(task_name: str):
+def _get_env_name(task_name: str) -> str:
     """Register tasks if needed (lazy import) and return environment name."""
 
     # lazy benchmark import
@@ -947,7 +1150,7 @@ def _get_env_name(task_name: str):
     return f"browsergym/{task_name}"
 
 
-def _send_chat_info(chat: Chat, action: str, agent_info: dict):
+def _send_chat_info(chat: Chat, action: str | None, agent_info: dict) -> None:
     """Send the think and action info to the chat."""
     msg = ""
     if "think" in agent_info:
@@ -965,9 +1168,9 @@ action:
     chat.add_message(role="info", msg=msg)
 
 
-def _flatten_dict(d, parent_key="", sep="."):
+def _flatten_dict(d: dict, parent_key: str = "", sep: str = ".") -> dict:
     """Recursively flatten a nested dictionary."""
-    items = []
+    items: list[tuple[str, Any]] = []
     for k, v in d.items():
         new_key = parent_key + sep + k if parent_key else k
         if isinstance(v, dict):
