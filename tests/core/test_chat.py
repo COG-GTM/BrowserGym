@@ -306,7 +306,8 @@ ADVERSARIAL_MESSAGES = [
 @pytest.mark.parametrize("msg", ADVERSARIAL_MESSAGES)
 def test_markdown_only_produces_safe_markup(chat, msg):
     chat.add_message("assistant", msg)
-    report = chat.page.evaluate("""() => {
+    report = chat.page.evaluate(
+        """() => {
             const bubble = [...document.querySelectorAll('#chatBody .msg__bubble')].pop();
             const allowed = {P: [], BR: [], STRONG: [], EM: [], CODE: [], PRE: [],
                              A: ['href', 'target', 'rel']};
@@ -319,6 +320,7 @@ def test_markdown_only_produces_safe_markup(chat, msg):
                 if (el.tagName === 'A' && !/^https?:\\/\\//.test(el.getAttribute('href'))) bad.push('href');
             }
             return bad;
-        }""")
+        }"""
+    )
     assert report == []
     assert chat.page.evaluate("window.__xss") is None
