@@ -187,6 +187,14 @@ def test_add_prediction_leaves_no_temporary_files(output_file, tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == [output_file.name]
 
 
+def test_add_prediction_supports_max_length_filenames(tmp_path):
+    output_file = tmp_path / ("p" * 249 + ".jsonl")
+
+    add_prediction_to_jsonl(str(output_file), "task_a", "answer_a", override_if_exists=False)
+
+    assert read_jsonl(output_file) == [{"id": "task_a", "answer": "answer_a"}]
+
+
 def test_add_prediction_preserves_file_mode(output_file):
     output_file.write_text("")
     output_file.chmod(0o640)

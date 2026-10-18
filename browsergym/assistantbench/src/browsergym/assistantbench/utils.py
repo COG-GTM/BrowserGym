@@ -65,7 +65,7 @@ def add_prediction_to_jsonl(
 
         # Write data to a unique temporary file, then atomically replace the output file
         output_path = pathlib.Path(file_path)
-        tmp_file_path = output_path.with_name(f".{output_path.name}.{uuid.uuid4().hex}.tmp")
+        tmp_file_path = output_path.with_name(f".prediction-{uuid.uuid4().hex}.tmp")
         try:
             with open(tmp_file_path, "x") as f:
                 for entry in data:
