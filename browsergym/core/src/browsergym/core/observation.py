@@ -1,4 +1,6 @@
 import base64
+import contextlib
+import functools
 import io
 import logging
 import pkgutil
@@ -23,6 +25,31 @@ class MarkingError(Exception):
     pass
 
 
+@functools.lru_cache(maxsize=None)
+def _get_js_source(filename: str) -> str:
+    return pkgutil.get_data(__name__, f"javascript/{filename}").decode("utf-8")
+
+
+@contextlib.contextmanager
+def _cdp_session(page: playwright.sync_api.Page, cdp: playwright.sync_api.CDPSession = None):
+    """
+    Yields `cdp` if provided (caller keeps ownership), otherwise opens a new CDP session on `page`
+    and detaches it on exit.
+    """
+    if cdp is not None:
+        yield cdp
+        return
+
+    cdp = page.context.new_cdp_session(page)
+    try:
+        yield cdp
+    finally:
+        try:
+            cdp.detach()
+        except playwright.sync_api.Error:
+            pass
+
+
 def _pre_extract(
     page: playwright.sync_api.Page,
     tags_to_mark: Literal["all", "standard_html"] = "standard_html",
@@ -31,9 +58,7 @@ def _pre_extract(
     """
     pre-extraction routine, marks dom elements (set bid and dynamic attributes like value and checked)
     """
-    js_frame_mark_elements = pkgutil.get_data(__name__, "javascript/frame_mark_elements.js").decode(
-        "utf-8"
-    )
+    js_frame_mark_elements = _get_js_source("frame_mark_elements.js")
 
     # we can't run this loop in JS due to Same-Origin Policy
     # (can't access the content of an iframe from a another one)
@@ -80,9 +105,7 @@ def _pre_extract(
 
 
 def _post_extract(page: playwright.sync_api.Page):
-    js_frame_unmark_elements = pkgutil.get_data(
-        __name__, "javascript/frame_unmark_elements.js"
-    ).decode("utf-8")
+    js_frame_unmark_elements = _get_js_source("frame_unmark_elements.js")
 
     # we can't run this loop in JS due to Same-Origin Policy
     # (can't access the content of an iframe from a another one)
@@ -112,13 +135,26 @@ def _post_extract(page: playwright.sync_api.Page):
                 raise e
 
 
-def extract_screenshot(page: playwright.sync_api.Page):
+def _get_native_device_pixel_ratio(page: playwright.sync_api.Page) -> float:
+    """
+    Device pixel ratio of the page without any BrowserGym override (cached on the page object,
+    it is fixed by the browser context for a fixed viewport).
+    """
+    dpr = getattr(page, "_bgym_native_device_pixel_ratio", None)
+    if dpr is None:
+        dpr = page.evaluate("() => window.devicePixelRatio")
+        page._bgym_native_device_pixel_ratio = dpr
+    return dpr
+
+
+def extract_screenshot(page: playwright.sync_api.Page, cdp: playwright.sync_api.CDPSession = None):
     """
     Extracts the screenshot image of a Playwright page using Chrome DevTools Protocol.
     Uses the bgym_scale_factor to capture higher resolution screenshots for better VLM understanding.
 
     Args:
         page: the playwright page of which to extract the screenshot.
+        cdp: an optional CDP session attached to `page` to reuse. If None, a new one is created.
 
     Returns:
         A screenshot of the page, in the form of a 3D array (height, width, rgb).
@@ -126,54 +162,66 @@ def extract_screenshot(page: playwright.sync_api.Page):
     """
 
     scale_factor = getattr(page, "_bgym_scale_factor", 1.0)
-    cdp = page.context.new_cdp_session(page)
     viewport = page.viewport_size
 
-    if viewport is None:
-        dimensions = page.evaluate(
-            """() => ({
-            width: window.innerWidth,
-            height: window.innerHeight,
-            devicePixelRatio: window.devicePixelRatio
-        })"""
-        )
-    else:
-        dimensions = {
-            "width": viewport["width"],
-            "height": viewport["height"],
-            "devicePixelRatio": 1.0,  # Override system DPR
-        }
-
-    # CAPTURE ORIGINAL METRICS BEFORE CHANGING
-    original_metrics = {
-        "width": dimensions["width"],
-        "height": dimensions["height"],
-        "deviceScaleFactor": 1.0,  # The original scale factor
-        "mobile": False,
-    }
-
-    # Apply scale factor to device metrics for higher resolution capture
-    cdp.send(
-        "Emulation.setDeviceMetricsOverride",
-        {
-            "width": dimensions["width"],
-            "height": dimensions["height"],
-            "deviceScaleFactor": scale_factor,  # Use bgym_scale_factor here
-            "mobile": False,
-        },
+    # With a fixed viewport, no scaling and a native DPR of 1, the device metrics override below
+    # would be a no-op: skip it to save two round-trips (and a potential relayout) per screenshot.
+    needs_metrics_override = (
+        scale_factor != 1.0 or viewport is None or _get_native_device_pixel_ratio(page) != 1.0
     )
 
-    cdp_answer = cdp.send(
-        "Page.captureScreenshot",
-        {
-            "format": "png",
-        },
-    )
+    with _cdp_session(page, cdp) as cdp:
+        if not needs_metrics_override:
+            cdp_answer = cdp.send(
+                "Page.captureScreenshot",
+                {
+                    "format": "png",
+                },
+            )
+        else:
+            if viewport is None:
+                dimensions = page.evaluate(
+                    """() => ({
+                    width: window.innerWidth,
+                    height: window.innerHeight,
+                    devicePixelRatio: window.devicePixelRatio
+                })"""
+                )
+            else:
+                dimensions = {
+                    "width": viewport["width"],
+                    "height": viewport["height"],
+                    "devicePixelRatio": 1.0,  # Override system DPR
+                }
 
-    # RESTORE ORIGINAL METRICS (don't just clear)
-    cdp.send("Emulation.setDeviceMetricsOverride", original_metrics)
+            # CAPTURE ORIGINAL METRICS BEFORE CHANGING
+            original_metrics = {
+                "width": dimensions["width"],
+                "height": dimensions["height"],
+                "deviceScaleFactor": 1.0,  # The original scale factor
+                "mobile": False,
+            }
 
-    cdp.detach()
+            # Apply scale factor to device metrics for higher resolution capture
+            cdp.send(
+                "Emulation.setDeviceMetricsOverride",
+                {
+                    "width": dimensions["width"],
+                    "height": dimensions["height"],
+                    "deviceScaleFactor": scale_factor,  # Use bgym_scale_factor here
+                    "mobile": False,
+                },
+            )
+
+            cdp_answer = cdp.send(
+                "Page.captureScreenshot",
+                {
+                    "format": "png",
+                },
+            )
+
+            # RESTORE ORIGINAL METRICS (don't just clear)
+            cdp.send("Emulation.setDeviceMetricsOverride", original_metrics)
 
     # bytes of a png file
     png_base64 = cdp_answer["data"]
@@ -219,6 +267,7 @@ def extract_dom_snapshot(
     include_dom_rects: bool = True,
     include_paint_order: bool = True,
     temp_data_cleanup: bool = True,
+    cdp: playwright.sync_api.CDPSession = None,
 ):
     """
     Extracts the DOM snapshot of a Playwright page using Chrome DevTools Protocol.
@@ -229,6 +278,7 @@ def extract_dom_snapshot(
         include_dom_rects: whether to include DOM rectangles (offsetRects, clientRects, scrollRects) in the snapshot.
         include_paint_order: whether to include paint orders in the snapshot.
         temp_data_cleanup: whether to clean up the temporary data stored in the ARIA attributes.
+        cdp: an optional CDP session attached to `page` to reuse. If None, a new one is created.
 
     Returns:
         A document snapshot, including the full DOM tree of the root node (including iframes,
@@ -237,16 +287,15 @@ def extract_dom_snapshot(
         DOM tree is flattened.
 
     """
-    cdp = page.context.new_cdp_session(page)
-    dom_snapshot = cdp.send(
-        "DOMSnapshot.captureSnapshot",
-        {
-            "computedStyles": computed_styles,
-            "includeDOMRects": include_dom_rects,
-            "includePaintOrder": include_paint_order,
-        },
-    )
-    cdp.detach()
+    with _cdp_session(page, cdp) as cdp:
+        dom_snapshot = cdp.send(
+            "DOMSnapshot.captureSnapshot",
+            {
+                "computedStyles": computed_styles,
+                "includeDOMRects": include_dom_rects,
+                "includePaintOrder": include_paint_order,
+            },
+        )
 
     # if requested, remove temporary data stored in the ARIA attributes of each node
     if temp_data_cleanup:
@@ -460,47 +509,47 @@ def extract_dom_extra_properties(dom_snapshot, scale_factor):
     return extra_properties
 
 
-def extract_all_frame_axtrees(page: playwright.sync_api.Page):
+def extract_all_frame_axtrees(
+    page: playwright.sync_api.Page, cdp: playwright.sync_api.CDPSession = None
+):
     """
     Extracts the AXTree of all frames (main document and iframes) of a Playwright page using Chrome DevTools Protocol.
 
     Args:
         page: the playwright page of which to extract the frame AXTrees.
+        cdp: an optional CDP session attached to `page` to reuse. If None, a new one is created.
 
     Returns:
         A dictionnary of AXTrees (as returned by Chrome DevTools Protocol) indexed by frame IDs.
 
     """
-    cdp = page.context.new_cdp_session(page)
-
-    # extract the frame tree
-    frame_tree = cdp.send(
-        "Page.getFrameTree",
-        {},
-    )
-
-    # extract all frame IDs into a list
-    # (breadth-first-search through the frame tree)
-    frame_ids = []
-    root_frame = frame_tree["frameTree"]
-    frames_to_process = [root_frame]
-    while frames_to_process:
-        frame = frames_to_process.pop()
-        frames_to_process.extend(frame.get("childFrames", []))
-        # extract the frame ID
-        frame_id = frame["frame"]["id"]
-        frame_ids.append(frame_id)
-
-    # extract the AXTree of each frame
-    frame_axtrees = {
-        frame_id: cdp.send(
-            "Accessibility.getFullAXTree",
-            {"frameId": frame_id},
+    with _cdp_session(page, cdp) as cdp:
+        # extract the frame tree
+        frame_tree = cdp.send(
+            "Page.getFrameTree",
+            {},
         )
-        for frame_id in frame_ids
-    }
 
-    cdp.detach()
+        # extract all frame IDs into a list
+        # (breadth-first-search through the frame tree)
+        frame_ids = []
+        root_frame = frame_tree["frameTree"]
+        frames_to_process = [root_frame]
+        while frames_to_process:
+            frame = frames_to_process.pop()
+            frames_to_process.extend(frame.get("childFrames", []))
+            # extract the frame ID
+            frame_id = frame["frame"]["id"]
+            frame_ids.append(frame_id)
+
+        # extract the AXTree of each frame
+        frame_axtrees = {
+            frame_id: cdp.send(
+                "Accessibility.getFullAXTree",
+                {"frameId": frame_id},
+            )
+            for frame_id in frame_ids
+        }
 
     # extract browsergym data from ARIA attributes
     for ax_tree in frame_axtrees.values():
@@ -533,50 +582,50 @@ def extract_all_frame_axtrees(page: playwright.sync_api.Page):
     return frame_axtrees
 
 
-def extract_merged_axtree(page: playwright.sync_api.Page):
+def extract_merged_axtree(
+    page: playwright.sync_api.Page, cdp: playwright.sync_api.CDPSession = None
+):
     """
     Extracts the merged AXTree of a Playwright page (main document and iframes AXTrees merged) using Chrome DevTools Protocol.
 
     Args:
         page: the playwright page of which to extract the merged AXTree.
+        cdp: an optional CDP session attached to `page` to reuse. If None, a new one is created.
 
     Returns:
         A merged AXTree (same format as those returned by Chrome DevTools Protocol).
 
     """
-    frame_axtrees = extract_all_frame_axtrees(page)
+    with _cdp_session(page, cdp) as cdp:
+        frame_axtrees = extract_all_frame_axtrees(page, cdp=cdp)
 
-    cdp = page.context.new_cdp_session(page)
-
-    # merge all AXTrees into one
-    merged_axtree = {"nodes": []}
-    for ax_tree in frame_axtrees.values():
-        merged_axtree["nodes"].extend(ax_tree["nodes"])
-        # connect each iframe node to the corresponding AXTree root node
-        for node in ax_tree["nodes"]:
-            if node["role"]["value"] == "Iframe":
-                frame_id = (
-                    cdp.send("DOM.describeNode", {"backendNodeId": node["backendDOMNodeId"]})
-                    .get("node", {})
-                    .get("frameId", None)
-                )
-                if not frame_id:
-                    logger.warning(
-                        f"AXTree merging: unable to recover frameId of node with backendDOMNodeId {repr(node['backendDOMNodeId'])}, skipping"
+        # merge all AXTrees into one
+        merged_axtree = {"nodes": []}
+        for ax_tree in frame_axtrees.values():
+            merged_axtree["nodes"].extend(ax_tree["nodes"])
+            # connect each iframe node to the corresponding AXTree root node
+            for node in ax_tree["nodes"]:
+                if node["role"]["value"] == "Iframe":
+                    frame_id = (
+                        cdp.send("DOM.describeNode", {"backendNodeId": node["backendDOMNodeId"]})
+                        .get("node", {})
+                        .get("frameId", None)
                     )
-                # it seems Page.getFrameTree() from CDP omits certain Frames (empty frames?)
-                # if a frame is not found in the extracted AXTrees, we just ignore it
-                elif frame_id in frame_axtrees:
-                    # root node should always be the first node in the AXTree
-                    frame_root_node = frame_axtrees[frame_id]["nodes"][0]
-                    assert frame_root_node["frameId"] == frame_id
-                    node["childIds"].append(frame_root_node["nodeId"])
-                else:
-                    logger.warning(
-                        f"AXTree merging: extracted AXTree does not contain frameId '{frame_id}', skipping"
-                    )
-
-    cdp.detach()
+                    if not frame_id:
+                        logger.warning(
+                            f"AXTree merging: unable to recover frameId of node with backendDOMNodeId {repr(node['backendDOMNodeId'])}, skipping"
+                        )
+                    # it seems Page.getFrameTree() from CDP omits certain Frames (empty frames?)
+                    # if a frame is not found in the extracted AXTrees, we just ignore it
+                    elif frame_id in frame_axtrees:
+                        # root node should always be the first node in the AXTree
+                        frame_root_node = frame_axtrees[frame_id]["nodes"][0]
+                        assert frame_root_node["frameId"] == frame_id
+                        node["childIds"].append(frame_root_node["nodeId"])
+                    else:
+                        logger.warning(
+                            f"AXTree merging: extracted AXTree does not contain frameId '{frame_id}', skipping"
+                        )
 
     return merged_axtree
 

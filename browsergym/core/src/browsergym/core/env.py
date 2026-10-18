@@ -31,6 +31,15 @@ from .task import AbstractBrowserTask
 logger = logging.getLogger(__name__)
 
 
+def _detach_cdp_session(cdp: Optional[playwright.sync_api.CDPSession]):
+    if cdp is None:
+        return
+    try:
+        cdp.detach()
+    except playwright.sync_api.Error:
+        pass
+
+
 def _try_to_extract_legacy_goal(goal: list):
     legacy_goal_strings = []
     for message in goal:
@@ -631,60 +640,70 @@ document.addEventListener("visibilitychange", () => {
                 "elapsed_time": np.asarray([time.time() - self.start_time]),
             }
             return obs
-        for retries_left in reversed(range(EXTRACT_OBS_MAX_TRIES)):
-            try:
-                # pre-extraction, mark dom elements (set bid, set dynamic attributes like value and checked)
-                _pre_extract(self.page, tags_to_mark=self.tags_to_mark, lenient=(retries_left == 0))
-
-                dom = extract_dom_snapshot(self.page)
-                axtree = extract_merged_axtree(self.page)
-                focused_element_bid = extract_focused_element_bid(self.page)
-                scale_factor = getattr(self.page, "_bgym_scale_factor", 1.0)
-                extra_properties = extract_dom_extra_properties(dom, scale_factor=scale_factor)
-            except (playwright.sync_api.Error, MarkingError) as e:
-                err_msg = str(e)
-                # try to add robustness to async events (detached / deleted frames)
-                if retries_left > 0 and (
-                    "Frame was detached" in err_msg
-                    or "Frame with the given frameId is not found" in err_msg
-                    or "Execution context was destroyed" in err_msg
-                    or "Frame has been detached" in err_msg
-                    or "Cannot mark a child frame without a bid" in err_msg
-                    or "Cannot read properties of undefined" in err_msg
-                ):
-                    logger.warning(
-                        f"An error occurred while extracting the dom and axtree. Retrying ({retries_left}/{EXTRACT_OBS_MAX_TRIES} tries left).\n{repr(e)}"
+        # one CDP session per extraction attempt, shared by all CDP-based extractors
+        cdp = None
+        try:
+            for retries_left in reversed(range(EXTRACT_OBS_MAX_TRIES)):
+                try:
+                    # pre-extraction, mark dom elements (set bid, set dynamic attributes like value and checked)
+                    _pre_extract(
+                        self.page, tags_to_mark=self.tags_to_mark, lenient=(retries_left == 0)
                     )
-                    # post-extract cleanup (ARIA attributes)
-                    _post_extract(self.page)
-                    time.sleep(0.5)
-                    continue
-                else:
-                    raise e
-            break
 
-        # post-extraction cleanup of temporary info in dom
-        _post_extract(self.page)
+                    if cdp is None:
+                        cdp = self.page.context.new_cdp_session(self.page)
 
-        # obs is generic to all tasks
-        obs = {
-            "chat_messages": tuple(copy.deepcopy(self.chat.messages)),
-            "goal": _try_to_extract_legacy_goal(self.goal_object),  # legacy goal, deprecated
-            "goal_object": tuple(
-                copy.deepcopy(self.goal_object)
-            ),  # new goal format, list of messages openai style
-            "open_pages_urls": tuple(page.url for page in self.context.pages),
-            "open_pages_titles": tuple(page.title() for page in self.context.pages),
-            "active_page_index": np.asarray([self.context.pages.index(self.page)]),
-            "url": self.page.url,  # redundant with "open_pages_urls" and "active_page_index"
-            "screenshot": extract_screenshot(self.page),
-            "dom_object": dom,
-            "axtree_object": axtree,
-            "extra_element_properties": extra_properties,
-            "focused_element_bid": focused_element_bid,
-            "last_action": self.last_action,
-            "last_action_error": self.last_action_error,
-            "elapsed_time": np.asarray([time.time() - self.start_time]),
-        }
+                    dom = extract_dom_snapshot(self.page, cdp=cdp)
+                    axtree = extract_merged_axtree(self.page, cdp=cdp)
+                    focused_element_bid = extract_focused_element_bid(self.page)
+                    scale_factor = getattr(self.page, "_bgym_scale_factor", 1.0)
+                    extra_properties = extract_dom_extra_properties(dom, scale_factor=scale_factor)
+                except (playwright.sync_api.Error, MarkingError) as e:
+                    err_msg = str(e)
+                    # try to add robustness to async events (detached / deleted frames)
+                    if retries_left > 0 and (
+                        "Frame was detached" in err_msg
+                        or "Frame with the given frameId is not found" in err_msg
+                        or "Execution context was destroyed" in err_msg
+                        or "Frame has been detached" in err_msg
+                        or "Cannot mark a child frame without a bid" in err_msg
+                        or "Cannot read properties of undefined" in err_msg
+                    ):
+                        logger.warning(
+                            f"An error occurred while extracting the dom and axtree. Retrying ({retries_left}/{EXTRACT_OBS_MAX_TRIES} tries left).\n{repr(e)}"
+                        )
+                        # post-extract cleanup (ARIA attributes)
+                        _post_extract(self.page)
+                        time.sleep(0.5)
+                        continue
+                    else:
+                        raise e
+                break
+
+            # post-extraction cleanup of temporary info in dom
+            _post_extract(self.page)
+
+            # obs is generic to all tasks
+            obs = {
+                "chat_messages": tuple(copy.deepcopy(self.chat.messages)),
+                "goal": _try_to_extract_legacy_goal(self.goal_object),  # legacy goal, deprecated
+                "goal_object": tuple(
+                    copy.deepcopy(self.goal_object)
+                ),  # new goal format, list of messages openai style
+                "open_pages_urls": tuple(page.url for page in self.context.pages),
+                "open_pages_titles": tuple(page.title() for page in self.context.pages),
+                "active_page_index": np.asarray([self.context.pages.index(self.page)]),
+                "url": self.page.url,  # redundant with "open_pages_urls" and "active_page_index"
+                "screenshot": extract_screenshot(self.page, cdp=cdp),
+                "dom_object": dom,
+                "axtree_object": axtree,
+                "extra_element_properties": extra_properties,
+                "focused_element_bid": focused_element_bid,
+                "last_action": self.last_action,
+                "last_action_error": self.last_action_error,
+                "elapsed_time": np.asarray([time.time() - self.start_time]),
+            }
+        finally:
+            _detach_cdp_session(cdp)
 
         return obs

@@ -817,3 +817,55 @@ def test_tags_to_mark():
             tags_to_mark="fdsjkhjk",
             action_mapping=None,
         )
+
+
+@pytest.mark.parametrize("scale_factor", [1.0, 1.5])
+def test_get_obs_reuses_single_cdp_session(scale_factor):
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": MULTI_IFRAME_URL},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        viewport=__VIEWPORT,
+        timeout=__TIMEOUT,
+    )
+    env.reset()
+    page = env.unwrapped.page
+    page._bgym_scale_factor = scale_factor
+
+    reference_screenshot = extract_screenshot(page)
+
+    context = page.context
+    original_new_cdp_session = context.new_cdp_session
+    sessions = []
+    sent_methods = []
+
+    def counting_new_cdp_session(p):
+        cdp = original_new_cdp_session(p)
+        original_send = cdp.send
+
+        def counting_send(method, params=None):
+            sent_methods.append(method)
+            return original_send(method, params)
+
+        cdp.send = counting_send
+        sessions.append(cdp)
+        return cdp
+
+    context.new_cdp_session = counting_new_cdp_session
+    try:
+        obs = env.unwrapped._get_obs()
+    finally:
+        context.new_cdp_session = original_new_cdp_session
+
+    assert len(sessions) == 1
+    n_overrides = sent_methods.count("Emulation.setDeviceMetricsOverride")
+    assert n_overrides == (0 if scale_factor == 1.0 else 2)
+    assert obs["screenshot"].shape == (
+        int(__VIEWPORT["height"] * scale_factor),
+        int(__VIEWPORT["width"] * scale_factor),
+        3,
+    )
+    assert np.array_equal(obs["screenshot"], reference_screenshot)
+
+    env.close()
