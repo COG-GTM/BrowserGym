@@ -11,6 +11,11 @@ const chatEvent = (chat: ChatMessage) =>
   ({ type: "event", event: { type: "chat", run_id: "r1", timestamp: chat.timestamp, chat } }) as const;
 
 describe("useRunLive chat reconciliation", () => {
+  it("loading applies the run and steps", () => {
+    expect(loaded.run).toEqual(run);
+    expect(loaded.loading).toBe(false);
+  });
+
   it("replaces the POST /chat response with the runner's re-stamped echo (SSE)", () => {
     let s = runLiveReducer(loaded, { type: "chat", message: sent });
     expect(users(s)).toHaveLength(1);

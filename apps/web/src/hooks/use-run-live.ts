@@ -84,7 +84,7 @@ function confirmOutbox(
   incoming: ChatMessage[],
   known: ChatMessage[],
 ): Pick<RunLiveState, "outbox" | "acked"> {
-  if (!state.outbox.length) return state;
+  if (!state.outbox.length) return { outbox: state.outbox, acked: state.acked };
   const seen = new Set([...known.map(chatKey), ...state.acked]);
   const outbox = [...state.outbox];
   const acked = [...state.acked];
