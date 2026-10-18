@@ -10,7 +10,9 @@ import sys
 import time
 import traceback
 import uuid
+import zlib
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime
@@ -118,6 +120,73 @@ class AbstractAgentArgs(ABC):
         """Comply the experiments.loop API for instantiating the agent."""
 
 
+class CorruptedResultFileError(FileNotFoundError):
+    """Raised when an experiment result file exists but cannot be decoded (e.g. truncated).
+
+    Subclasses FileNotFoundError so that callers treating missing results as incomplete
+    also treat corrupted ones the same way.
+    """
+
+
+_CORRUPTED_FILE_ERRORS = (
+    EOFError,
+    pickle.UnpicklingError,
+    gzip.BadGzipFile,
+    zlib.error,
+    json.JSONDecodeError,
+    UnicodeDecodeError,
+)
+
+
+def _fsync_dir(directory: Path):
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def _atomic_open(path, mode="wb", **kwargs):
+    """Open a temporary sibling of `path` for writing, then atomically move it to `path`.
+
+    The data is flushed and fsynced before `os.replace`, so readers only ever see either
+    the previous file (or no file) or the complete new one, even if the process is killed
+    mid-write. The temporary file is removed if writing fails.
+    """
+    path = Path(path)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        with open(tmp_path, mode, **kwargs) as f:
+            yield f
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+    _fsync_dir(path.parent)
+
+
+@contextmanager
+def _atomic_gzip_open(path):
+    """Atomic counterpart of `gzip.open(path, "wb")`."""
+    path = Path(path)
+    with _atomic_open(path, "wb") as raw:
+        with gzip.GzipFile(filename=path.name, mode="wb", fileobj=raw) as f:
+            yield f
+
+
 def save_package_versions(exp_dir: Path):
     """Save the versions of the installed packages in the experiment directory."""
     python_dists = "\n".join(
@@ -128,7 +197,8 @@ def save_package_versions(exp_dir: Path):
             ]
         )
     )
-    (exp_dir / "package_versions.txt").write_text(python_dists)
+    with _atomic_open(exp_dir / "package_versions.txt", "w") as f:
+        f.write(python_dists)
 
 
 @dataclass
@@ -257,27 +327,29 @@ class StepInfo:
 
             if save_screenshot and screenshot is not None:
                 img = Image.fromarray(screenshot)
-                img.save(exp_dir / f"screenshot_step_{self.step}.png")
+                with _atomic_open(exp_dir / f"screenshot_step_{self.step}.png") as f:
+                    img.save(f, format="PNG")
 
             if save_som and screenshot_som is not None:
                 img = Image.fromarray(screenshot_som)
-                img.save(exp_dir / f"screenshot_som_step_{self.step}.png")
+                with _atomic_open(exp_dir / f"screenshot_som_step_{self.step}.png") as f:
+                    img.save(f, format="PNG")
 
             # save goal object (which might contain images) to a separate file to save space
             if self.obs.get("goal_object", False):
                 # save the goal object only once (goal should never change once setup)
                 goal_object_file = Path(exp_dir) / "goal_object.pkl.gz"
                 if not goal_object_file.exists():
-                    with gzip.open(goal_object_file, "wb") as f:
+                    with _atomic_gzip_open(goal_object_file) as f:
                         pickle.dump(self.obs["goal_object"], f)
                 # set goal_object to a special placeholder value, which indicates it should be loaded from a separate file
                 self.obs["goal_object"] = None
 
-        with gzip.open(exp_dir / f"step_{self.step}.pkl.gz", "wb") as f:
+        with _atomic_gzip_open(exp_dir / f"step_{self.step}.pkl.gz") as f:
             pickle.dump(self, f)
 
         if save_json:
-            with open(exp_dir / "steps_info.json", "w") as f:
+            with _atomic_open(exp_dir / "steps_info.json", "w") as f:
                 json.dump(self, f, indent=4, cls=DataclassJSONEncoder)
 
         if self.obs is not None:
@@ -362,7 +434,7 @@ class ExpArgs:
         self._make_dir(exp_root)
 
         self.exp_dir.mkdir(parents=True, exist_ok=True)
-        with open(self.exp_dir / "exp_args.pkl", "wb") as f:
+        with _atomic_open(self.exp_dir / "exp_args.pkl", "wb") as f:
             pickle.dump(self, f)
 
     def _make_dir(self, exp_root):
@@ -548,7 +620,7 @@ class ExpArgs:
             summary_info["terminated"] = episode_info[-1].terminated
             summary_info["truncated"] = episode_info[-1].truncated
 
-        with open(exp_dir / "summary_info.json", "w") as f:
+        with _atomic_open(exp_dir / "summary_info.json", "w") as f:
             json.dump(summary_info, f, indent=4)
 
 
@@ -599,6 +671,19 @@ def _is_debugging():
     return sys.gettrace() is not None
 
 
+def _load_result_file(path: Path, opener, loader, mode="rb"):
+    """Load a result file, raising CorruptedResultFileError if it is empty or truncated."""
+    with opener(path, mode) as f:
+        if os.path.getsize(path) == 0:
+            raise CorruptedResultFileError(f"{path.name} is empty.")
+        try:
+            return loader(f)
+        except _CORRUPTED_FILE_ERRORS as e:
+            raise CorruptedResultFileError(
+                f"{path.name} is corrupted or truncated: {type(e).__name__}: {e}"
+            ) from e
+
+
 class ExpResult:
     """Helper class to load and visualize the results of an experiment.
 
@@ -630,17 +715,17 @@ class ExpResult:
     @property
     def exp_args(self) -> ExpArgs:
         if self._exp_args is None:
-            with open(self.exp_dir / "exp_args.pkl", "rb") as f:
-                self._exp_args = pickle.load(f)
-                # in case experiments were moved
-                self._exp_args.exp_dir = self.exp_dir
+            self._exp_args = _load_result_file(self.exp_dir / "exp_args.pkl", open, pickle.load)
+            # in case experiments were moved
+            self._exp_args.exp_dir = self.exp_dir
         return self._exp_args
 
     def get_step_info(self, step: int) -> StepInfo:
         """Load the step info from the file and return it."""
         if self._steps_info.get(step, None) is None:
-            with gzip.open(self.exp_dir / f"step_{step}.pkl.gz", "rb") as f:
-                self._steps_info[step] = pickle.load(f)
+            self._steps_info[step] = _load_result_file(
+                self.exp_dir / f"step_{step}.pkl.gz", gzip.open, pickle.load
+            )
             if self._steps_info[step].obs:
                 if "screenshot" not in self._steps_info[step].obs:
                     try:
@@ -661,9 +746,10 @@ class ExpResult:
                     "goal_object" in self._steps_info[step].obs
                     and self._steps_info[step].obs["goal_object"] is None
                 ):
-                    with gzip.open(self.exp_dir / "goal_object.pkl.gz", "rb") as f:
-                        goal_object = pickle.load(f)
-                        self._steps_info[step].obs["goal_object"] = goal_object
+                    goal_object = _load_result_file(
+                        self.exp_dir / "goal_object.pkl.gz", gzip.open, pickle.load
+                    )
+                    self._steps_info[step].obs["goal_object"] = goal_object
 
         return self._steps_info[step]
 
@@ -679,11 +765,9 @@ class ExpResult:
     @property
     def summary_info(self) -> dict:
         if self._summary_info is None:
-            with open(self.exp_dir / "summary_info.json", "r") as f:
-                # if length is zero raise file not found error
-                if os.fstat(f.fileno()).st_size == 0:
-                    raise FileNotFoundError(f"summary_info.json is empty.")
-                self._summary_info = json.load(f)
+            self._summary_info = _load_result_file(
+                self.exp_dir / "summary_info.json", open, json.load, mode="r"
+            )
         return self._summary_info
 
     @property
