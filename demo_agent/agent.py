@@ -34,7 +34,7 @@ class DemoAgent(Agent):
     """A basic agent using OpenAI API, to demonstrate BrowserGym's functionalities."""
 
     def obs_preprocessor(self, obs: dict) -> dict:
-
+        # only compute the text representations get_action() will actually use
         return {
             "chat_messages": obs["chat_messages"],
             "screenshot": obs["screenshot"],
@@ -44,8 +44,12 @@ class DemoAgent(Agent):
             "open_pages_urls": obs["open_pages_urls"],
             "open_pages_titles": obs["open_pages_titles"],
             "active_page_index": obs["active_page_index"],
-            "axtree_txt": flatten_axtree_to_str(obs["axtree_object"]),
-            "pruned_html": prune_html(flatten_dom_to_str(obs["dom_object"])),
+            "axtree_txt": (
+                flatten_axtree_to_str(obs["axtree_object"]) if self.use_axtree else None
+            ),
+            "pruned_html": (
+                prune_html(flatten_dom_to_str(obs["dom_object"])) if self.use_html else None
+            ),
         }
 
     def __init__(
