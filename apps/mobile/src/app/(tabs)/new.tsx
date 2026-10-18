@@ -41,7 +41,8 @@ export default function NewRunScreen() {
 
   const isOpenended = taskId === OPENENDED;
   const visibleTasks = (tasks.data ?? []).slice(0, q ? 8 : 5);
-  const selectedTask = tasks.data?.find((task) => task.id === taskId);
+  const allTasks = useTasks('');
+  const selectedTask = (allTasks.data ?? tasks.data)?.find((task) => task.id === taskId);
   const goalMissing = isOpenended && goal.trim().length === 0;
 
   const submit = () => {

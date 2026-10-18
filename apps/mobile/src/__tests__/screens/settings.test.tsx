@@ -26,4 +26,14 @@ describe('Settings screen', () => {
     await user.type(screen.getByTestId('settings-api-url'), 'http://10.0.0.5:8000/api/v1');
     expect(screen.getByTestId('settings-save-url')).toBeEnabled();
   });
+
+  it('drops the push registration when the backend changes', async () => {
+    await renderWithProviders(<SettingsScreen />, {
+      settings: { mockMode: true, pushEnabled: true, pushToken: 'ExponentPushToken[mock-android-x]' },
+    });
+    expect(screen.getByTestId('settings-push')).toHaveProp('value', true);
+    fireEvent(screen.getByTestId('settings-mock'), 'valueChange', false);
+    await waitFor(() => expect(screen.getByTestId('settings-push')).toHaveProp('value', false));
+    expect(screen.getByTestId('settings-push-status')).toHaveTextContent(/Backend changed/);
+  });
 });

@@ -14,6 +14,16 @@ export interface Settings {
 
 export const SETTINGS_STORAGE_KEY = 'side.settings.v1';
 
+/** Read the persisted push opt-in outside React (e.g. from the notification handler). */
+export async function storedPushEnabled(): Promise<boolean> {
+  try {
+    const raw = await AsyncStorage.getItem(SETTINGS_STORAGE_KEY);
+    return raw ? Boolean((JSON.parse(raw) as Partial<Settings>).pushEnabled) : false;
+  } catch {
+    return false;
+  }
+}
+
 export function defaultApiBaseUrl(): string {
   const fromEnv = process.env.EXPO_PUBLIC_SIDE_API_URL;
   if (fromEnv) return fromEnv;

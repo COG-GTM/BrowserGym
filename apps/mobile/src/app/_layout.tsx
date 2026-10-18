@@ -5,17 +5,16 @@ import { Platform } from 'react-native';
 
 import { ApiProvider } from '@/api/ApiProvider';
 import { loadNotifications } from '@/notifications/loader';
-import { SettingsProvider } from '@/settings/SettingsContext';
+import { SettingsProvider, storedPushEnabled } from '@/settings/SettingsContext';
 import { ThemeProvider, useTheme } from '@/theme/ThemeProvider';
 
 if (Platform.OS !== 'web') {
   loadNotifications()?.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: false,
-      shouldSetBadge: false,
-    }),
+    // The contract has no unregister endpoint, so pushes can still arrive after opting out; hide them locally.
+    handleNotification: async () => {
+      const show = await storedPushEnabled();
+      return { shouldShowBanner: show, shouldShowList: show, shouldPlaySound: false, shouldSetBadge: false };
+    },
   });
 }
 

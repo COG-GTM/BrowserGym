@@ -186,6 +186,12 @@ export function useRunEvents(id: string, status: RunStatus | undefined) {
         }
       },
       onError: () => setState('error'),
+      onReconnect: () => {
+        setState('live');
+        qc.invalidateQueries({ queryKey: keys.run(scope, id) });
+        qc.invalidateQueries({ queryKey: keys.steps(scope, id) });
+        qc.invalidateQueries({ queryKey: keys.chat(scope, id) });
+      },
       onClose: () => setState('closed'),
     });
     return unsubscribe;

@@ -86,3 +86,24 @@ describe('MockSideApi', () => {
     expect(api.registeredDevices).toEqual([{ expo_push_token: 'ExponentPushToken[x]', platform: 'android' }]);
   });
 });
+
+describe('MockSideApi task replays and live demo', () => {
+  it('replays task-specific actions instead of the click-test script', async () => {
+    const api = new MockSideApi({ latencyMs: 0, startDelayMs: 0, stepIntervalMs: 5, seed: false });
+    const run = await api.createRun(runBody('browsergym/miniwob.login-user'));
+    await waitForTerminal(api, run.id);
+    const actions = (await api.listSteps(run.id)).map((s) => s.action);
+    expect(actions).toEqual([null, "fill('u5', 'kanesha')", "fill('p6', 'qL3x9')", "click('l9')"]);
+    expect((await api.getRun(run.id)).status).toBe('succeeded');
+    api.dispose();
+  });
+
+  it('starts a fresh live demo after the seeded one finishes', async () => {
+    const api = new MockSideApi({ latencyMs: 0, startDelayMs: 0, stepIntervalMs: 5 });
+    await waitForTerminal(api, LIVE_RUN_ID);
+    await new Promise((r) => setTimeout(r, 40));
+    const running = (await api.listRuns({ status: 'running' })).items;
+    expect(running.some((r) => r.id.startsWith(`${LIVE_RUN_ID}_`))).toBe(true);
+    api.dispose();
+  });
+});

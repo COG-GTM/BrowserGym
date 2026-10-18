@@ -25,10 +25,16 @@ export default function SettingsScreen() {
   }
   const dirty = url.trim() !== settings.apiBaseUrl;
 
+  const changeBackend = (patch: { mockMode?: boolean; apiBaseUrl?: string }) => {
+    if (!settings.pushEnabled) return update(patch);
+    update({ ...patch, pushEnabled: false, pushToken: null });
+    setPushStatus('Backend changed: turn run notifications on again to register with it.');
+  };
+
   const togglePush = async (enabled: boolean) => {
     if (!enabled) {
       update({ pushEnabled: false, pushToken: null });
-      setPushStatus('Push notifications turned off.');
+      setPushStatus('Run notifications turned off on this device; incoming pushes are hidden.');
       return;
     }
     setPushBusy(true);
@@ -54,7 +60,7 @@ export default function SettingsScreen() {
             <Switch
               testID="settings-mock"
               value={settings.mockMode}
-              onValueChange={(mockMode) => update({ mockMode })}
+              onValueChange={(mockMode) => changeBackend({ mockMode })}
               trackColor={{ true: t.colors.accent, false: t.colors.border }}
             />
           </Row>
@@ -75,7 +81,7 @@ export default function SettingsScreen() {
               title="Save"
               variant="primary"
               disabled={!dirty || settings.mockMode}
-              onPress={() => update({ apiBaseUrl: url.trim() })}
+              onPress={() => changeBackend({ apiBaseUrl: url.trim() })}
               style={{ flex: 1 }}
             />
             <Button

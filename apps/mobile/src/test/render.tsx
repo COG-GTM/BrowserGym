@@ -26,8 +26,15 @@ export function runBody(task_id: string, extra: Partial<RunCreate> = {}): RunCre
   };
 }
 
+const createdApis: MockSideApi[] = [];
+afterEach(() => {
+  for (const api of createdApis.splice(0)) api.dispose();
+});
+
 export function fastMockApi() {
-  return new MockSideApi({ latencyMs: 0, startDelayMs: 0, stepIntervalMs: 15 });
+  const api = new MockSideApi({ latencyMs: 0, startDelayMs: 0, stepIntervalMs: 15 });
+  createdApis.push(api);
+  return api;
 }
 
 export async function renderWithProviders(
@@ -35,7 +42,7 @@ export async function renderWithProviders(
   { api = fastMockApi(), settings }: { api?: SideApi; settings?: Partial<Settings> } = {},
 ) {
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } },
   });
   const result = await render(
     <SafeAreaProvider initialMetrics={SAFE_AREA}>

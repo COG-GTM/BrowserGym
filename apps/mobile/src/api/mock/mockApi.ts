@@ -17,6 +17,7 @@ import {
   MOCK_SCREENSHOTS,
   MOCK_TASKS,
   openendedScript,
+  taskScript,
   type MockScreenshotKey,
   type ScriptStep,
 } from './fixtures';
@@ -57,6 +58,8 @@ export class MockSideApi implements SideApi {
   private listeners = new Map<string, Set<RunEventHandlers>>();
   private devices: { expo_push_token: string; platform: string }[] = [];
   private seq = 0;
+  private demoTimer?: ReturnType<typeof setTimeout>;
+  private disposed = false;
   private readonly stepIntervalMs: number;
   private readonly startDelayMs: number;
   private readonly latencyMs: number;
@@ -128,16 +131,13 @@ export class MockSideApi implements SideApi {
       finished_at: null,
       error: null,
     };
-    const script =
-      task.id === 'browsergym/openended'
-        ? openendedScript(body.goal ?? '', body.start_url || 'https://example.com/')
-        : CLICK_TEST_SCRIPT;
+    const script = taskScript(task.id, body.goal ?? '', body.start_url || 'https://example.com/') ?? [];
     const state = this.insert(run, script);
-    if (task.requires_setup) {
-      state.timer = setTimeout(
-        () => this.finish(state, 'failed', `${task.benchmark} requires external setup (env vars / servers)`),
-        this.startDelayMs,
-      );
+    if (task.requires_setup || script.length === 0) {
+      const reason = task.requires_setup
+        ? `${task.benchmark} requires external setup (env vars / servers)`
+        : `No offline replay for ${task.id} in mock mode`;
+      state.timer = setTimeout(() => this.finish(state, 'failed', reason), this.startDelayMs);
     } else {
       state.timer = setTimeout(() => this.start(state), this.startDelayMs);
     }
@@ -245,6 +245,8 @@ export class MockSideApi implements SideApi {
 
   /** Stop every simulated timer (tests). */
   dispose() {
+    this.disposed = true;
+    if (this.demoTimer) clearTimeout(this.demoTimer);
     for (const state of this.runs.values()) if (state.timer) clearTimeout(state.timer);
     this.listeners.clear();
   }
@@ -321,6 +323,30 @@ export class MockSideApi implements SideApi {
     if (error) this.pushChat(state, 'info', error);
     this.emit(state, { type: 'status', status });
     this.listeners.delete(state.run.id);
+    if (state.slow && !this.disposed) this.demoTimer = setTimeout(() => this.startLiveDemo(), this.stepIntervalMs * 3);
+  }
+
+  /** Keep a live demo run around in mock mode: a fresh one starts after the previous one ends. */
+  private startLiveDemo() {
+    if (this.disposed) return;
+    const id = `${LIVE_RUN_ID}_${(++this.seq).toString(36)}`;
+    const run: Run = {
+      id,
+      task_id: 'browsergym/miniwob.click-test',
+      goal: MOCK_TASKS.find((t) => t.id === 'browsergym/miniwob.click-test')?.description ?? null,
+      agent: { type: 'openai', model: 'gpt-4o', use_screenshot: true, use_axtree: true },
+      status: 'queued',
+      reward: null,
+      n_steps: 0,
+      max_steps: 15,
+      created_at: this.iso(),
+      started_at: null,
+      finished_at: null,
+      error: null,
+    };
+    const state = this.insert(run, CLICK_TEST_SCRIPT);
+    state.slow = true;
+    state.timer = setTimeout(() => this.start(state), this.startDelayMs);
   }
 
   private pushChat(state: RunState, role: ChatMessage['role'], message: string) {

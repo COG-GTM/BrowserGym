@@ -59,4 +59,13 @@ describe('New Run screen', () => {
     expect(await screen.findByTestId('task-browsergym/miniwob.book-flight')).toBeOnTheScreen();
     await waitFor(() => expect(screen.queryByTestId('task-browsergym/miniwob.login-user')).not.toBeOnTheScreen());
   });
+
+  it('keeps the selected task visible while search hides it', async () => {
+    const user = userEvent.setup();
+    await renderWithProviders(<NewRunScreen />);
+    await user.press(await screen.findByTestId('task-browsergym/miniwob.login-user'));
+    await user.type(screen.getByTestId('new-task-search'), 'flight');
+    expect(await screen.findByTestId('task-browsergym/miniwob.book-flight')).toBeOnTheScreen();
+    expect(screen.getByTestId('task-browsergym/miniwob.login-user')).toBeOnTheScreen();
+  });
 });

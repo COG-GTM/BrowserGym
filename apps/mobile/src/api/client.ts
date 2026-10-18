@@ -27,6 +27,8 @@ export interface RunEventHandlers {
   onEvent: (event: RunEvent) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
+  /** The stream reconnected after an error; events may have been missed meanwhile. */
+  onReconnect?: () => void;
 }
 
 /** Everything the app needs from the Side API (contracts/openapi.yaml). Implemented over HTTP and by the mock. */
