@@ -534,19 +534,34 @@
                 .replace(/'/g, "&#039;");
         }
 
-        // Inline markdown on already-escaped text: **bold**, *italic*, [text](https://url).
-        function renderInline(escaped) {
+        const LINK_TOKEN = /(\[[^\]\n]+\]\([^)\s]+\))/g;
+        const LINK_PARTS = /^\[([^\]\n]+)\]\(([^)\s]+)\)$/;
+
+        // **bold** and *italic* on already-escaped text (never applied to link destinations)
+        function renderEmphasis(escaped) {
             return escaped
                 .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
-                .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>")
-                .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (match, text, url) => {
-                    // url is already HTML-escaped, so it cannot break out of the attribute
-                    const raw = url.replace(/&amp;/g, "&");
-                    if (!SAFE_LINK.test(raw)) {
-                        return match;
+                .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>");
+        }
+
+        // Inline markdown on already-escaped text: [text](https://url), **bold**, *italic*.
+        // Links are split out first so the destination is taken verbatim from the escaped input.
+        function renderInline(escaped) {
+            return escaped
+                .split(LINK_TOKEN)
+                .map((part) => {
+                    const link = part.match(LINK_PARTS);
+                    if (!link) {
+                        return renderEmphasis(part);
                     }
-                    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+                    const [, text, url] = link;
+                    // url is already HTML-escaped (no quotes or tags), so it cannot break out of the attribute
+                    if (!SAFE_LINK.test(url.replace(/&amp;/g, "&"))) {
+                        return renderEmphasis(part);
+                    }
+                    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${renderEmphasis(text)}</a>`;
                 })
+                .join("")
                 .replace(/\n/g, "<br>");
         }
 

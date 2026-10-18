@@ -278,3 +278,47 @@ def test_wait_for_user_message(chat):
         "timestamp": chat.messages[-1]["timestamp"],
         "message": "next please",
     }
+
+
+def test_link_destination_not_formatted(chat):
+    chat.add_message(
+        "assistant", "see [the *topic*](https://example.com/*topic*?q=**x**) and *after*"
+    )
+    bubble = bubbles(chat, "assistant").last
+    link = bubble.locator("a")
+    assert link.get_attribute("href") == "https://example.com/*topic*?q=**x**"
+    assert link.locator("em").inner_text() == "topic"
+    assert bubble.locator("p > em").inner_text() == "after"
+
+
+ADVERSARIAL_MESSAGES = [
+    '[<img src=x onerror="window.__xss=1">](https://a.com)',
+    '[x](https://a.com/"onmouseover="window.__xss=1)',
+    "[x](https://a.com/*)<b>*[y](https://b.com/*)</b>",
+    '**[x](https://a.com/**" onclick="window.__xss=1**)**',
+    "*[a](https://a.com/x*y) *[b](javascript:window.__xss=1)*",
+    "[`x`](https://a.com/`<svg onload=window.__xss=1>`)",
+    "``` <script>window.__xss=1</script> ```",
+    "[x](https://a.com/&quot;onfocus=&quot;window.__xss=1)",
+]
+
+
+@pytest.mark.parametrize("msg", ADVERSARIAL_MESSAGES)
+def test_markdown_only_produces_safe_markup(chat, msg):
+    chat.add_message("assistant", msg)
+    report = chat.page.evaluate("""() => {
+            const bubble = [...document.querySelectorAll('#chatBody .msg__bubble')].pop();
+            const allowed = {P: [], BR: [], STRONG: [], EM: [], CODE: [], PRE: [],
+                             A: ['href', 'target', 'rel']};
+            const bad = [];
+            for (const el of bubble.querySelectorAll('*')) {
+                if (!(el.tagName in allowed)) { bad.push(el.tagName); continue; }
+                for (const attr of el.attributes) {
+                    if (!allowed[el.tagName].includes(attr.name)) bad.push(el.tagName + '@' + attr.name);
+                }
+                if (el.tagName === 'A' && !/^https?:\\/\\//.test(el.getAttribute('href'))) bad.push('href');
+            }
+            return bad;
+        }""")
+    assert report == []
+    assert chat.page.evaluate("window.__xss") is None
