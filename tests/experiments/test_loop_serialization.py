@@ -1,6 +1,7 @@
 import gzip
 import logging
 import pickle
+import os
 import shutil
 from dataclasses import fields
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from browsergym.experiments import loop as exp_loop
 from browsergym.experiments import utils as exp_utils
 from browsergym.experiments.agent import AgentInfo
 from browsergym.experiments.loop import (
@@ -147,11 +149,14 @@ def test_save_step_info_is_atomic(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     step_info = StepInfo(step=0, obs={"screenshot": screenshot, "goal": "g"}, action="noop()")
     step_info.save_step_info(tmp_path)
     original = (tmp_path / "step_0.pkl.gz").read_bytes()
+    original_png = (tmp_path / "screenshot_step_0.png").read_bytes()
 
     def broken_dump(*args, **kwargs):
         raise RuntimeError("disk on fire")
 
     step_info.action = "click('a')"
+    screenshot = np.full((2, 2, 3), 255, dtype=np.uint8)
+    step_info.obs["screenshot"] = screenshot
     monkeypatch.setattr(pickle, "dump", broken_dump)
     with pytest.raises(ExperimentSaveError) as exc_info:
         step_info.save_step_info(tmp_path)
@@ -161,8 +166,9 @@ def test_save_step_info_is_atomic(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert "Could not save step 0" in msg
     assert "step_0.pkl.gz" in msg
     assert "RuntimeError: disk on fire" in msg
-    # previous version untouched, no temporary files left, obs restored
+    # previous version untouched (step file and its screenshot), no temporary files left, obs restored
     assert (tmp_path / "step_0.pkl.gz").read_bytes() == original
+    assert (tmp_path / "screenshot_step_0.png").read_bytes() == original_png
     assert not list(tmp_path.glob(".*.tmp"))
     assert step_info.obs["screenshot"] is screenshot
 
@@ -176,6 +182,30 @@ def test_save_step_info_missing_dir(tmp_path: Path):
 def test_saved_files_are_not_owner_only(tmp_path: Path):
     StepInfo(step=0, obs={}).save_step_info(tmp_path)
     assert (tmp_path / "step_0.pkl.gz").stat().st_mode & 0o044  # group/other readable (umask 022)
+
+
+def test_saved_files_follow_current_umask(tmp_path: Path):
+    old_umask = os.umask(0o077)
+    try:
+        StepInfo(step=0, obs={}).save_step_info(tmp_path)
+    finally:
+        os.umask(old_umask)
+    assert (tmp_path / "step_0.pkl.gz").stat().st_mode & 0o777 == 0o600
+
+
+def test_temp_file_creation_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    def no_space(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(exp_loop.os, "open", no_space)
+    with pytest.raises(ExperimentSaveError) as exc_info:
+        StepInfo(step=3, obs={}).save_step_info(tmp_path)
+    monkeypatch.undo()
+
+    msg = str(exc_info.value)
+    assert "Could not save step 3" in msg
+    assert "No space left on device" in msg
+    assert not list(tmp_path.iterdir())
 
 
 def test_corrupted_step_file_error(tmp_path: Path):
@@ -211,16 +241,49 @@ def test_env_args_json_round_trip():
     assert EnvArgs.from_json(env_args.to_json()) == env_args
 
 
-def test_count_tokens_offline_fallback(monkeypatch: pytest.MonkeyPatch, caplog):
+@pytest.fixture
+def clean_encoding_cache():
+    exp_utils._encodings.clear()
+    exp_utils._encoding_failures.clear()
+    yield
+    exp_utils._encodings.clear()
+    exp_utils._encoding_failures.clear()
+
+
+def test_count_tokens_offline_fallback(
+    monkeypatch: pytest.MonkeyPatch, caplog, clean_encoding_cache
+):
     def no_network(model):
         raise ConnectionError("offline")
 
-    exp_utils._get_encoding.cache_clear()
     monkeypatch.setattr(exp_utils.tiktoken, "encoding_for_model", no_network)
-    try:
-        with caplog.at_level(logging.WARNING, logger=exp_utils.__name__):
-            assert exp_utils.count_tokens("abcdefghi", model="fake-model") == 3
-            assert exp_utils.count_messages_token(["abcd", {"content": "abcd"}], "fake-model") == 2
-        assert sum("approximated" in r.getMessage() for r in caplog.records) == 1
-    finally:
-        exp_utils._get_encoding.cache_clear()
+    with caplog.at_level(logging.WARNING, logger=exp_utils.__name__):
+        assert exp_utils.count_tokens("abcdefghi", model="fake-model") == 3
+        assert exp_utils.count_messages_token(["abcd", {"content": "abcd"}], "fake-model") == 2
+    assert sum("approximated" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_count_tokens_recovers_after_transient_failure(
+    monkeypatch: pytest.MonkeyPatch, clean_encoding_cache
+):
+    class FakeEncoding:
+        def encode(self, text):
+            return list(text)
+
+    calls = []
+
+    def flaky(model):
+        calls.append(model)
+        if len(calls) == 1:
+            raise ConnectionError("offline")
+        return FakeEncoding()
+
+    monkeypatch.setattr(exp_utils.tiktoken, "encoding_for_model", flaky)
+    assert exp_utils.count_tokens("abcdefghi", model="fake-model") == 3  # approximation
+    assert exp_utils.count_tokens("abcdefghi", model="fake-model") == 3  # within retry delay
+    assert len(calls) == 1
+
+    monkeypatch.setattr(exp_utils, "ENCODING_RETRY_DELAY", 0.0)
+    assert exp_utils.count_tokens("abcdefghi", model="fake-model") == 9  # tokenizer loaded
+    assert exp_utils.count_tokens("abcdefghi", model="fake-model") == 9  # cached
+    assert len(calls) == 2

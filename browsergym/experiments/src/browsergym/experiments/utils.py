@@ -1,6 +1,6 @@
 import logging
+import time
 from collections.abc import Sequence
-from functools import lru_cache
 from typing import Any
 
 import tiktoken
@@ -11,20 +11,36 @@ logger = logging.getLogger(__name__)
 APPROX_CHARS_PER_TOKEN = 4
 
 
-@lru_cache(maxsize=None)
+# seconds before retrying to load a tokenizer that failed to load (e.g., transient network error)
+ENCODING_RETRY_DELAY = 60.0
+
+_encodings: dict[str, tiktoken.Encoding] = {}
+_encoding_failures: dict[str, float] = {}
+
+
 def _get_encoding(model: str) -> tiktoken.Encoding | None:
-    try:
-        return tiktoken.encoding_for_model(model)
-    except Exception as e:  # unknown model, or BPE file not cached and no network access
-        logger.warning(
-            "Could not load the tiktoken encoding for model %r (%s: %s). "
-            "Token counts will be approximated (%d characters per token).",
-            model,
-            type(e).__name__,
-            e,
-            APPROX_CHARS_PER_TOKEN,
-        )
+    if model in _encodings:
+        return _encodings[model]
+    failed_at = _encoding_failures.get(model)
+    if failed_at is not None and time.monotonic() - failed_at < ENCODING_RETRY_DELAY:
         return None
+    try:
+        encoding = tiktoken.encoding_for_model(model)
+    except Exception as e:  # unknown model, or BPE file not cached and no network access
+        if failed_at is None:
+            logger.warning(
+                "Could not load the tiktoken encoding for model %r (%s: %s). "
+                "Token counts will be approximated (%d characters per token).",
+                model,
+                type(e).__name__,
+                e,
+                APPROX_CHARS_PER_TOKEN,
+            )
+        _encoding_failures[model] = time.monotonic()
+        return None
+    _encoding_failures.pop(model, None)
+    _encodings[model] = encoding
+    return encoding
 
 
 def count_tokens(text: str, model: str = "gpt-4") -> int:

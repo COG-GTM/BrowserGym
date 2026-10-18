@@ -7,7 +7,6 @@ import os
 import pickle
 import re
 import sys
-import tempfile
 import time
 import traceback
 import uuid
@@ -49,14 +48,60 @@ class ExperimentLoadError(OSError):
     """Raised when a saved experiment artifact exists but cannot be read (e.g., truncated file)."""
 
 
-def _current_umask() -> int:
-    mask = os.umask(0)
-    os.umask(mask)
-    return mask
+def _write_temp(path: Path, write_fn: Callable[[BinaryIO], None]) -> Path:
+    """Write a temporary sibling of `path` with `write_fn` and return its path."""
+    if not path.parent.is_dir():
+        raise ExperimentSaveError(
+            f"Cannot save {path.name!r}: directory {str(path.parent)!r} does not exist."
+        )
+    tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        # mode 0o666 filtered by the current umask, same as a regular `open(path, "w")`
+        fd = os.open(
+            tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o666
+        )
+        with os.fdopen(fd, "wb") as f:
+            write_fn(f)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException as e:
+        tmp_path.unlink(missing_ok=True)
+        if isinstance(e, Exception):
+            raise ExperimentSaveError(
+                f"Failed to save {str(path)!r}: {type(e).__name__}: {e}"
+            ) from e
+        raise
+    return tmp_path
 
 
-# permissions given to saved files, same as a regular `open(path, "w")` would
-_FILE_MODE = 0o666 & ~_current_umask()
+class _StagedWrites:
+    """Write a group of files atomically: each file is first written to a temporary sibling, and
+    the temporary files are renamed into place only once all of them were written successfully.
+    If any write fails, no target file is modified and the temporary files are removed."""
+
+    def __init__(self) -> None:
+        self._staged: list[tuple[Path, Path]] = []
+
+    def add(self, path: str | Path, write_fn: Callable[[BinaryIO], None]) -> None:
+        path = Path(path)
+        self._staged.append((_write_temp(path, write_fn), path))
+
+    def __enter__(self) -> "_StagedWrites":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            if exc_type is None:
+                for tmp_path, path in self._staged:
+                    try:
+                        os.replace(tmp_path, path)
+                    except OSError as e:
+                        raise ExperimentSaveError(
+                            f"Failed to save {str(path)!r}: {type(e).__name__}: {e}"
+                        ) from e
+        finally:
+            for tmp_path, _ in self._staged:
+                tmp_path.unlink(missing_ok=True)
 
 
 def _atomic_write(path: str | Path, write_fn: Callable[[BinaryIO], None]) -> None:
@@ -67,53 +112,47 @@ def _atomic_write(path: str | Path, write_fn: Callable[[BinaryIO], None]) -> Non
     Raises:
         ExperimentSaveError: if the directory is missing or the write fails.
     """
-    path = Path(path)
-    if not path.parent.is_dir():
-        raise ExperimentSaveError(
-            f"Cannot save {path.name!r}: directory {str(path.parent)!r} does not exist."
-        )
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            write_fn(f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.chmod(tmp_path, _FILE_MODE)  # mkstemp creates files readable by the owner only
-        os.replace(tmp_path, path)
-    except BaseException as e:
-        tmp_path.unlink(missing_ok=True)
-        if isinstance(e, Exception):
-            raise ExperimentSaveError(
-                f"Failed to save {str(path)!r}: {type(e).__name__}: {e}"
-            ) from e
-        raise
+    with _StagedWrites() as staged:
+        staged.add(path, write_fn)
 
 
-def _atomic_write_text(path: str | Path, text: str) -> None:
-    _atomic_write(path, lambda f: f.write(text.encode("utf-8")))
+def _text_writer(text: str) -> Callable[[BinaryIO], None]:
+    return lambda f: f.write(text.encode("utf-8"))
 
 
-def _atomic_write_json(path: str | Path, obj: Any, **json_kwargs) -> None:
-    _atomic_write(path, lambda f: f.write(json.dumps(obj, **json_kwargs).encode("utf-8")))
+def _json_writer(obj: Any, **json_kwargs) -> Callable[[BinaryIO], None]:
+    return lambda f: f.write(json.dumps(obj, **json_kwargs).encode("utf-8"))
 
 
-def _atomic_write_pickle(path: str | Path, obj: Any, compress: bool = False) -> None:
-    path = Path(path)
-
+def _pickle_writer(
+    path: str | Path, obj: Any, compress: bool = False
+) -> Callable[[BinaryIO], None]:
     def write(f: BinaryIO) -> None:
         if compress:
             # keep the original (non-temporary) file name in the gzip header
-            with gzip.GzipFile(filename=path.name.removesuffix(".gz"), mode="wb", fileobj=f) as gz:
+            name = Path(path).name.removesuffix(".gz")
+            with gzip.GzipFile(filename=name, mode="wb", fileobj=f) as gz:
                 pickle.dump(obj, gz)
         else:
             pickle.dump(obj, f)
 
-    _atomic_write(path, write)
+    return write
 
 
-def _atomic_write_image(path: str | Path, array: np.ndarray) -> None:
-    _atomic_write(path, lambda f: Image.fromarray(array).save(f, format="PNG"))
+def _image_writer(array: np.ndarray) -> Callable[[BinaryIO], None]:
+    return lambda f: Image.fromarray(array).save(f, format="PNG")
+
+
+def _atomic_write_text(path: str | Path, text: str) -> None:
+    _atomic_write(path, _text_writer(text))
+
+
+def _atomic_write_json(path: str | Path, obj: Any, **json_kwargs) -> None:
+    _atomic_write(path, _json_writer(obj, **json_kwargs))
+
+
+def _atomic_write_pickle(path: str | Path, obj: Any, compress: bool = False) -> None:
+    _atomic_write(path, _pickle_writer(path, obj, compress=compress))
 
 
 def _fill_missing_fields(obj: Any) -> None:
@@ -369,38 +408,49 @@ class StepInfo:
         screenshot = screenshot_som = None
         goal_object_popped, goal_object = False, None
         try:
-            # special treatment for some of the observation fields
-            if self.obs is not None:
-                # save screenshots to separate files
-                screenshot = self.obs.pop("screenshot", None)
-                screenshot_som = self.obs.pop("screenshot_som", None)
+            # all files of the step are committed together, so that a failure never pairs a new
+            # screenshot with an old step file (or vice versa)
+            with _StagedWrites() as staged:
+                # special treatment for some of the observation fields
+                if self.obs is not None:
+                    # save screenshots to separate files
+                    screenshot = self.obs.pop("screenshot", None)
+                    screenshot_som = self.obs.pop("screenshot_som", None)
 
-                if save_screenshot and screenshot is not None:
-                    _atomic_write_image(exp_dir / f"screenshot_step_{self.step}.png", screenshot)
-
-                if save_som and screenshot_som is not None:
-                    _atomic_write_image(
-                        exp_dir / f"screenshot_som_step_{self.step}.png", screenshot_som
-                    )
-
-                # save goal object (which might contain images) to a separate file to save space
-                if self.obs.get("goal_object", False):
-                    # save the goal object only once (goal should never change once setup)
-                    goal_object_file = exp_dir / "goal_object.pkl.gz"
-                    if not goal_object_file.exists():
-                        _atomic_write_pickle(
-                            goal_object_file, self.obs["goal_object"], compress=True
+                    if save_screenshot and screenshot is not None:
+                        staged.add(
+                            exp_dir / f"screenshot_step_{self.step}.png", _image_writer(screenshot)
                         )
-                    # set goal_object to a special placeholder value, which indicates it should be loaded from a separate file
-                    goal_object_popped, goal_object = True, self.obs["goal_object"]
-                    self.obs["goal_object"] = None
 
-            _atomic_write_pickle(exp_dir / f"step_{self.step}.pkl.gz", self, compress=True)
+                    if save_som and screenshot_som is not None:
+                        staged.add(
+                            exp_dir / f"screenshot_som_step_{self.step}.png",
+                            _image_writer(screenshot_som),
+                        )
 
-            if save_json:
-                _atomic_write_json(
-                    exp_dir / "steps_info.json", self, indent=4, cls=DataclassJSONEncoder
-                )
+                    # save goal object (which might contain images) to a separate file to save space
+                    if self.obs.get("goal_object", False):
+                        # save the goal object only once (goal should never change once setup)
+                        goal_object_file = exp_dir / "goal_object.pkl.gz"
+                        if not goal_object_file.exists():
+                            staged.add(
+                                goal_object_file,
+                                _pickle_writer(
+                                    goal_object_file, self.obs["goal_object"], compress=True
+                                ),
+                            )
+                        # set goal_object to a special placeholder value, which indicates it should be loaded from a separate file
+                        goal_object_popped, goal_object = True, self.obs["goal_object"]
+                        self.obs["goal_object"] = None
+
+                step_file = exp_dir / f"step_{self.step}.pkl.gz"
+                staged.add(step_file, _pickle_writer(step_file, self, compress=True))
+
+                if save_json:
+                    staged.add(
+                        exp_dir / "steps_info.json",
+                        _json_writer(self, indent=4, cls=DataclassJSONEncoder),
+                    )
         except ExperimentSaveError as e:
             raise ExperimentSaveError(
                 f"Could not save step {self.step} in {str(exp_dir)!r}: {e}"
