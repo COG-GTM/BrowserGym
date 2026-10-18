@@ -161,6 +161,55 @@ def test_add_prediction_keeps_file_intact_if_write_fails(output_file, lock_file,
 
     assert read_jsonl(output_file) == [{"id": "task_a", "answer": "answer_a"}]
     assert not lock_file.exists()
+    assert sorted(p.name for p in output_file.parent.iterdir()) == [output_file.name]
+
+
+def test_add_prediction_tmp_suffixed_output_kept_intact_if_write_fails(tmp_path, monkeypatch):
+    output_file = tmp_path / "predictions.tmp"
+    add_prediction_to_jsonl(str(output_file), "task_a", "answer_a", override_if_exists=False)
+
+    def failing_dumps(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(utils_module.json, "dumps", failing_dumps)
+    with pytest.raises(OSError, match="disk full"):
+        add_prediction_to_jsonl(str(output_file), "task_b", "answer_b", override_if_exists=False)
+    monkeypatch.undo()
+
+    assert read_jsonl(output_file) == [{"id": "task_a", "answer": "answer_a"}]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["predictions.tmp"]
+
+
+def test_add_prediction_leaves_no_temporary_files(output_file, tmp_path):
+    add_prediction_to_jsonl(str(output_file), "task_a", "answer_a", override_if_exists=False)
+    add_prediction_to_jsonl(str(output_file), "task_a", "answer_b", override_if_exists=True)
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == [output_file.name]
+
+
+def test_add_prediction_preserves_file_mode(output_file):
+    output_file.write_text("")
+    output_file.chmod(0o640)
+
+    add_prediction_to_jsonl(str(output_file), "task_a", "answer_a", override_if_exists=False)
+
+    assert output_file.stat().st_mode & 0o777 == 0o640
+
+
+def test_add_prediction_through_symlink_updates_target(tmp_path):
+    target = tmp_path / "runs" / "october.jsonl"
+    target.parent.mkdir()
+    target.write_text('{"id": "task_a", "answer": ""}\n')
+    link = tmp_path / "current.jsonl"
+    link.symlink_to(target)
+
+    add_prediction_to_jsonl(str(link), "task_a", "answer_a", override_if_exists=True)
+
+    assert link.is_symlink()
+    assert read_jsonl(target) == [{"id": "task_a", "answer": "answer_a"}]
+    assert read_jsonl(link) == [{"id": "task_a", "answer": "answer_a"}]
+    assert not target.with_suffix(".lock").exists()
+    assert not link.with_suffix(".lock").exists()
 
 
 class FakeClock:

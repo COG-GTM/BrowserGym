@@ -2,7 +2,9 @@ import json
 import logging
 import os
 import pathlib
+import shutil
 import time
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +15,8 @@ def add_prediction_to_jsonl(
     """
     Multiprocessing-safe file write.
     """
+    # resolve symlinks, so that the target file is updated and aliases share the same lock
+    file_path = os.path.realpath(file_path)
     lock_file_path = pathlib.Path(file_path).with_suffix(".lock")
     lock_max_wait = 10  # 10 seconds
 
@@ -59,12 +63,19 @@ def add_prediction_to_jsonl(
                 f"Prediction for task ID {repr(task_id)} already exists in file {file_path}."
             )
 
-        # Write data to a temporary file, then atomically replace the output file
-        tmp_file_path = pathlib.Path(file_path).with_suffix(".tmp")
-        with open(tmp_file_path, "w") as f:
-            for entry in data:
-                f.write(json.dumps(entry) + "\n")
-        os.replace(tmp_file_path, file_path)
+        # Write data to a unique temporary file, then atomically replace the output file
+        output_path = pathlib.Path(file_path)
+        tmp_file_path = output_path.with_name(f".{output_path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            with open(tmp_file_path, "x") as f:
+                for entry in data:
+                    f.write(json.dumps(entry) + "\n")
+            if output_path.exists():
+                shutil.copymode(output_path, tmp_file_path)
+            os.replace(tmp_file_path, output_path)
+        except BaseException:
+            tmp_file_path.unlink(missing_ok=True)
+            raise
 
     finally:
         # Release lock (remove file), even if an error occurred
