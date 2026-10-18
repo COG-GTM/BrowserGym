@@ -414,3 +414,32 @@ jobs:
           OPENAI_API_KEY: ""
         run: |
           pytest -n 5 --durations=10 -m 'not pricy' --slowmo 1000 -v tests/assistantbench
+
+  browsergym-webarenalite:
+    runs-on: ubuntu-22.04
+
+    defaults:
+      run:
+        shell: bash -l {0}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip' # caching pip dependencies
+
+      - name: Pip install
+        working-directory: ./dev
+        run: pip install -r requirements.txt
+
+      - name: Pip list
+        run: pip list
+
+      - name: Run browsergym-webarenalite offline evaluator Unit Tests
+        env:
+          OPENAI_API_KEY: ""
+        run: pytest --durations=10 -v tests/webarenalite
