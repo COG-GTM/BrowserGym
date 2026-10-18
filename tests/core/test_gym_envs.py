@@ -183,6 +183,55 @@ def test_active_page():
     env.close()
 
 
+DELAYED_UPDATES_PAGE = f"file://{__DATA_DIR}/delayed_updates.html"
+
+
+def _pre_observation_wait(info):
+    return info["wait_for_page_loading_stop"] - info["wait_for_page_loading_start"]
+
+
+@pytest.mark.parametrize("adaptive", [True, False])
+def test_pre_observation_delay(adaptive: bool):
+    delay = 3.0
+    action_set = PythonActionSet()
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": DELAYED_UPDATES_PAGE},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        timeout=__TIMEOUT,
+        action_mapping=action_set.to_python_code,
+        pre_observation_delay=delay,
+        adaptive_pre_observation_delay=adaptive,
+    )
+    obs, info = env.reset()
+
+    # idle page: the adaptive delay returns early, the fixed delay sleeps the full duration
+    obs, reward, term, trunc, info = env.step("")
+    assert not obs["last_action_error"]
+    if adaptive:
+        assert _pre_observation_wait(info) < delay / 2
+    else:
+        assert _pre_observation_wait(info) >= delay
+
+    # debounced auto-complete: the observation includes the delayed DOM updates
+    obs, reward, term, trunc, info = env.step('page.get_by_label("Search:").fill("abc")')
+    assert not obs["last_action_error"]
+    dom = flatten_dom_to_str(obs["dom_object"])
+    assert "First suggestion" in dom
+    assert "Second suggestion" in dom
+    if adaptive:
+        assert _pre_observation_wait(info) < delay / 2
+
+    # navigation: the observation is extracted from the new page
+    obs, reward, term, trunc, info = env.step('page.get_by_text("Go to example").click()')
+    assert not obs["last_action_error"]
+    assert obs["url"].endswith("example.html")
+    assert "Example Domain" in flatten_dom_to_str(obs["dom_object"])
+
+    env.close()
+
+
 def test_nested_iframes_default_demo_mode():
     demo_mode = "default"
     action_set = HighLevelActionSet(demo_mode=demo_mode)

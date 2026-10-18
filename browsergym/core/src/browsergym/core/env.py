@@ -30,6 +30,129 @@ from .task import AbstractBrowserTask
 
 logger = logging.getLogger(__name__)
 
+# Injected in every page to keep track of pending work (short timers, fetch/XHR requests)
+# that may still change the page after an action, see _PAGE_SETTLE_JS.
+_PAGE_ACTIVITY_TRACKER_JS = r"""
+(() => {
+    if (window.browsergym_activity) {
+        return;
+    }
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    const nativeClearTimeout = window.clearTimeout.bind(window);
+    const timers = new Map();  // timer id => due time
+    let requests = 0;
+
+    window.setTimeout = function (handler, delay, ...args) {
+        if (typeof handler !== "function") {
+            return nativeSetTimeout(handler, delay, ...args);
+        }
+        let id;
+        const wrapped = function (...handlerArgs) {
+            timers.delete(id);
+            return handler.apply(this, handlerArgs);
+        };
+        id = nativeSetTimeout(wrapped, delay, ...args);
+        timers.set(id, performance.now() + (Number(delay) || 0));
+        return id;
+    };
+    window.clearTimeout = function (id) {
+        timers.delete(id);
+        return nativeClearTimeout(id);
+    };
+
+    const nativeFetch = window.fetch;
+    if (nativeFetch) {
+        window.fetch = function (...args) {
+            requests++;
+            let promise;
+            try {
+                promise = nativeFetch.apply(this, args);
+            } catch (e) {
+                requests--;
+                throw e;
+            }
+            promise.then(() => { requests--; }, () => { requests--; });
+            return promise;
+        };
+    }
+
+    const nativeSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function (...args) {
+        let done = false;
+        const finish = () => {
+            if (!done) {
+                done = true;
+                requests--;
+            }
+        };
+        requests++;
+        this.addEventListener("loadend", finish, {once: true});
+        try {
+            return nativeSend.apply(this, args);
+        } catch (e) {
+            finish();
+            throw e;
+        }
+    };
+
+    Object.defineProperty(window, "browsergym_activity", {
+        value: {
+            setTimeout: nativeSetTimeout,
+            // whether a request is in flight or a timer is due before `horizon`
+            busyUntil: (horizon) => {
+                if (requests > 0) {
+                    return true;
+                }
+                for (const due of timers.values()) {
+                    if (due <= horizon) {
+                        return true;
+                    }
+                }
+                return false;
+            },
+        },
+    });
+})();
+"""
+
+# Resolves once the page has rendered two animation frames, has no request in flight nor timer due
+# within the budget, and its DOM has seen no mutation for `quietMs`, or after `maxMs` at the latest.
+_PAGE_SETTLE_JS = r"""
+async ([quietMs, maxMs]) => {
+    const activity = window.browsergym_activity;
+    const setTimeout_ = activity ? activity.setTimeout : window.setTimeout.bind(window);
+    const busyUntil = activity ? activity.busyUntil : () => false;
+    const start = performance.now();
+    const deadline = start + maxMs;
+    const sleep = (ms) => new Promise((resolve) => setTimeout_(resolve, ms));
+    // rAF does not fire in background pages, hence the timer
+    const nextFrame = () => new Promise((resolve) => {
+        setTimeout_(resolve, 50);
+        requestAnimationFrame(() => resolve());
+    });
+    await nextFrame();
+    await nextFrame();
+    let lastMutation = performance.now();
+    const observer = new MutationObserver(() => { lastMutation = performance.now(); });
+    observer.observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
+    try {
+        while (performance.now() < deadline) {
+            const now = performance.now();
+            const quietFor = now - lastMutation;
+            if (busyUntil(deadline)) {
+                await sleep(Math.min(20, deadline - now));
+            } else if (quietFor < quietMs) {
+                await sleep(Math.min(quietMs - quietFor, deadline - now));
+            } else {
+                return;
+            }
+        }
+    } finally {
+        observer.disconnect();
+    }
+}
+"""
+
 
 def _try_to_extract_legacy_goal(goal: list):
     legacy_goal_strings = []
@@ -78,6 +201,7 @@ class BrowserEnv(gym.Env, ABC):
         action_mapping: Optional[callable] = HighLevelActionSet().to_python_code,
         use_raw_page_output: bool = False,
         pre_observation_delay: float = 0.5,  # seconds
+        adaptive_pre_observation_delay: bool = True,
     ):
         """
         Instantiate a ready to use BrowserEnv gym environment.
@@ -100,6 +224,7 @@ class BrowserEnv(gym.Env, ABC):
             action_mapping: if set, the environment will use this function to map every received action to executable Python code.
             use_raw_page_output: if set, the environment will use the raw page output instead of the default processing.
             pre_observation_delay: float = 0.5, number of seconds to wait before starting to extract the observation. This can be important if there are some auto-complete menu that may appear after filling a field.
+            adaptive_pre_observation_delay: if set (default), the delay ends as soon as the active page has settled (two animation frames rendered, no fetch/XHR request in flight, no setTimeout callback due within the delay, and no DOM mutation for 100 ms), and `pre_observation_delay` is only the upper bound. Steps that trigger a navigation still wait the full delay. If not set, the environment always sleeps `pre_observation_delay` seconds.
         """
         super().__init__()
         self.task_entrypoint = task_entrypoint
@@ -120,6 +245,7 @@ class BrowserEnv(gym.Env, ABC):
         self.action_mapping = action_mapping
         self.use_raw_page_output = use_raw_page_output
         self.pre_observation_delay = pre_observation_delay
+        self.adaptive_pre_observation_delay = adaptive_pre_observation_delay
 
         # check argument values
         assert tags_to_mark in ("all", "standard_html")
@@ -132,6 +258,7 @@ class BrowserEnv(gym.Env, ABC):
         self.context: playwright.sync_api.BrowserContext = None
         self.page: playwright.sync_api.Page = None
         self.page_history: dict = {}
+        self._navigation_requested: bool = False
 
         # chat
         self.chat: Chat = None
@@ -296,6 +423,11 @@ class BrowserEnv(gym.Env, ABC):
         # set default timeout
         self.context.set_default_timeout(timeout)
 
+        # keep track of pending work started by an action, see _wait_pre_observation_delay()
+        if self.adaptive_pre_observation_delay:
+            self.context.on("request", self._on_request)
+            self.context.add_init_script(_PAGE_ACTIVITY_TRACKER_JS)
+
         # hack: keep track of the active page with a javascript callback
         # there is no concept of active page in playwright
         # https://github.com/microsoft/playwright/issues/2603
@@ -413,6 +545,7 @@ document.addEventListener("visibilitychange", () => {
         info = {}
         info["action_exec_start"] = time.time()
         info["action_exec_timeout"] = 0
+        self._navigation_requested = False
 
         def send_message_to_user(text: str):
             if not isinstance(text, str):
@@ -485,8 +618,7 @@ document.addEventListener("visibilitychange", () => {
 
         info["wait_for_page_loading_start"] = time.time()
         # wait a bit (for the JavaScript callback to set the active page)
-        logger.debug(f"Waiting {self.pre_observation_delay} seconds before extracting observation")
-        time.sleep(self.pre_observation_delay)  # wait for JS events to be fired
+        self._wait_pre_observation_delay()
         self.context.cookies()  # trigger all waiting Playwright callbacks on the stack (hack, see https://playwright.dev/java/docs/multithreading)
 
         # wait for the network to idle before extracting the observation, reward etc.
@@ -560,6 +692,47 @@ document.addEventListener("visibilitychange", () => {
         if self.chat.messages[-1]["role"] == "assistant" and self.wait_for_user_message:
             self.chat.wait_for_user_message()
 
+    def _on_request(self, request: playwright.sync_api.Request):
+        if request.is_navigation_request():
+            self._navigation_requested = True
+
+    def _wait_pre_observation_delay(self):
+        """
+        Wait for JS events triggered by the last action to fire, for at most `pre_observation_delay` seconds.
+        """
+        if not self.adaptive_pre_observation_delay:
+            logger.debug(
+                f"Waiting {self.pre_observation_delay} seconds before extracting observation"
+            )
+            time.sleep(self.pre_observation_delay)  # wait for JS events to be fired
+            return
+
+        logger.debug(
+            f"Waiting at most {self.pre_observation_delay} seconds for the page to settle before extracting observation"
+        )
+        deadline = time.monotonic() + self.pre_observation_delay
+        settled_page = None
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            # a navigation is in flight, the current document is not the one to observe
+            if self._navigation_requested:
+                time.sleep(remaining)
+                return
+            page = self.page
+            # stop once the active page (which JS callbacks may have changed) has settled
+            if page is settled_page:
+                return
+            try:
+                page.evaluate(_PAGE_SETTLE_JS, [100, int(remaining * 1000)])
+                settled_page = page
+            except playwright.sync_api.Error:
+                # page closed or navigated during the wait, wait out the full delay
+                time.sleep(max(0, deadline - time.monotonic()))
+                return
+            self.context.cookies()  # process pending Playwright callbacks (active page changes)
+
     def _wait_dom_loaded(self):
         for page in self.context.pages:
             try:
@@ -567,6 +740,9 @@ document.addEventListener("visibilitychange", () => {
             except playwright.sync_api.Error:
                 pass
             for frame in page.frames:
+                # the main frame's load state was already awaited above
+                if frame == page.main_frame:
+                    continue
                 try:
                     frame.wait_for_load_state("domcontentloaded", timeout=3000)
                 except playwright.sync_api.Error:
