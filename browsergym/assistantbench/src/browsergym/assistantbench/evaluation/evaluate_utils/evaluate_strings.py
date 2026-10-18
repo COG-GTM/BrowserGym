@@ -174,9 +174,9 @@ def evaluate_strings(prediction, gold):
         f1 = np.mean(f1_per_bag)
     except (AttributeError, TypeError, ValueError):
         logger.warning(
-            "String evaluation failed, scoring as 0.0 (prediction=%r, gold=%r)",
-            prediction,
-            gold,
+            "String evaluation failed, scoring as 0.0 (prediction type=%s, gold type=%s)",
+            type(prediction).__name__,
+            type(gold).__name__,
             exc_info=True,
         )
         f1 = 0.0

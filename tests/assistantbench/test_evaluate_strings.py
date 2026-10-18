@@ -28,10 +28,11 @@ def test_evaluate_strings_scores_valid_answers_without_warning(caplog):
 )
 def test_evaluate_strings_logs_malformed_prediction(caplog, prediction):
     with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
-        assert evaluate_strings(prediction, ["ok"]) == 0.0
+        assert evaluate_strings(prediction, ["secret gold answer"]) == 0.0
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert "String evaluation failed" in warnings[0].getMessage()
+    assert "secret gold answer" not in warnings[0].getMessage()
     assert warnings[0].exc_info is not None
 
 
