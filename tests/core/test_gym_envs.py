@@ -4,6 +4,7 @@ from time import time
 
 import bs4
 import gymnasium as gym
+import playwright.sync_api
 import pytest
 
 # register openended gym environments
@@ -12,6 +13,7 @@ import browsergym.core.action
 from browsergym.core.action.highlevel import HighLevelActionSet
 from browsergym.core.action.python import PythonActionSet
 from browsergym.core.constants import BROWSERGYM_ID_ATTRIBUTE as BID_ATTR
+from browsergym.core.env import get_action_exec_timeout
 from browsergym.utils.obs import flatten_dom_to_str
 
 __SLOW_MO = 1000 if "DISPLAY_BROWSER" in os.environ else None
@@ -126,6 +128,52 @@ def test_max_episode_steps():
 
     assert term == False
     assert trunc == True
+
+    env.close()
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        (playwright.sync_api.TimeoutError("Locator.click: Timeout 5000ms exceeded."), 5.0),
+        (playwright.sync_api.TimeoutError("Timeout 250ms exceeded."), 0.25),
+        (
+            playwright.sync_api.TimeoutError(
+                "Page.wait_for_selector: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator"
+            ),
+            30.0,
+        ),
+        (playwright.sync_api.TimeoutError("Locator.click: something else"), None),
+        (ValueError("Locator.click: Timeout 5000ms exceeded."), None),
+        (playwright.sync_api.Error("Locator.click: Timeout 5000ms exceeded."), None),
+    ],
+)
+def test_get_action_exec_timeout(error, expected):
+    assert get_action_exec_timeout(error) == expected
+
+
+def test_action_exec_timeout():
+    action_set = PythonActionSet()
+
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": TEST_PAGE},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        timeout=__TIMEOUT,
+        action_mapping=action_set.to_python_code,
+    )
+    obs, info = env.reset()
+
+    obs, reward, term, trunc, info = env.step('page.locator("#does-not-exist").click()')
+
+    assert obs["last_action_error"].startswith("TimeoutError: Locator.click: Timeout")
+    assert info["action_exec_timeout"] == __TIMEOUT / 1000
+
+    obs, reward, term, trunc, info = env.step("")
+
+    assert obs["last_action_error"] == ""
+    assert info["action_exec_timeout"] == 0
 
     env.close()
 

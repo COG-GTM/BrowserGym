@@ -31,6 +31,20 @@ from .task import AbstractBrowserTask
 logger = logging.getLogger(__name__)
 
 
+def get_action_exec_timeout(error: Exception) -> Optional[float]:
+    """
+    Returns the timeout duration (in seconds) of a Playwright timeout error, or None.
+    Playwright >= 1.41 prefixes messages with the API name,
+    e.g. "Locator.click: Timeout 5000ms exceeded."
+    """
+    if not isinstance(error, playwright.sync_api.TimeoutError):
+        return None
+    match = re.search(r"Timeout (\d+)ms exceeded", str(error))
+    if not match:
+        return None
+    return float(match.group(1)) / 1000  # ms to sec
+
+
 def _try_to_extract_legacy_goal(goal: list):
     legacy_goal_strings = []
     for message in goal:
@@ -459,9 +473,9 @@ document.addEventListener("visibilitychange", () => {
             self.last_action_error = ""
         except Exception as e:
             self.last_action_error = f"{type(e).__name__}: {e}"
-            match = re.match("TimeoutError: Timeout ([0-9]+)ms exceeded.", self.last_action_error)
-            if match:
-                info["action_exec_timeout"] = float(match.groups()[0]) / 1000  # ms to sec
+            timeout = get_action_exec_timeout(e)
+            if timeout is not None:
+                info["action_exec_timeout"] = timeout
         return self.post_step(info)
 
     def post_step(
