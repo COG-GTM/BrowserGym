@@ -3,7 +3,6 @@ import multiprocessing as mp
 import os
 import time
 import traceback
-from queue import Empty
 import typing
 from typing import Literal
 
@@ -231,7 +230,7 @@ def massage_tasks(task_ids: list[str], max_retries: int = 1, timeout: int = 60):
                 )
 
 
-def run_massage(outcome_queue: mp.Queue, task_id: str):
+def run_massage(outcome_conn, task_id: str):
     outcome = "exception", None
     env = None
     try:
@@ -262,7 +261,8 @@ def run_massage(outcome_queue: mp.Queue, task_id: str):
             else:
                 logger.warning(f"Error while closing environment after failed massage: {e!r}")
         finally:
-            outcome_queue.put(outcome)
+            outcome_conn.send(outcome)
+            outcome_conn.close()
 
 
 def massage_task_within_subprocess(
@@ -276,33 +276,43 @@ def massage_task_within_subprocess(
       - err_msg: error message if any, or None.
     """
 
-    queue = mp.Queue()
-    process = mp.Process(target=run_massage, args=(queue, task_id))
+    # one-way pipe whose only writer lives in the child: if the child dies (even mid-send) the
+    # reader gets EOF instead of blocking, and the child's send only completes as the parent reads
+    reader, writer = mp.Pipe(duplex=False)
+    process = mp.Process(target=run_massage, args=(writer, task_id))
     process.start()
+    writer.close()
 
-    # read the queue while the child runs: a large outcome blocks the child's queue feeder
-    # thread (and hence its exit) until the parent drains the pipe
+    def try_recv(poll_timeout: float):
+        try:
+            if reader.poll(poll_timeout):
+                return reader.recv(), True
+        except (EOFError, OSError):
+            return None, True  # writer closed without (complete) outcome
+        return None, False
+
     outcome = None
     deadline = time.monotonic() + timeout
-    while outcome is None:
+    while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        try:
-            outcome = queue.get(timeout=min(remaining, 1.0))
-        except Empty:
-            if not process.is_alive():
-                try:
-                    outcome = queue.get(timeout=1.0)
-                except Empty:
-                    pass
-                break
+        outcome, done = try_recv(min(remaining, 1.0))
+        if done:
+            break
+        if not process.is_alive():
+            outcome, _ = try_recv(1.0)
+            break
 
     if outcome is None and not process.is_alive():
-        outcome = (
-            "exception",
-            f"Massage sub-process exited with code {process.exitcode} without reporting an outcome",
-        )
+        # the child may have finished right at the deadline
+        outcome, _ = try_recv(0)
+        if outcome is None:
+            process.join(timeout=kill_timeout)
+            outcome = (
+                "exception",
+                f"Massage sub-process exited with code {process.exitcode} without reporting an outcome",
+            )
 
     if outcome is None:
         # if the process is still alive after the timeout
@@ -320,4 +330,5 @@ def massage_task_within_subprocess(
             f"Massage sub-process still alive {kill_timeout} seconds after kill(), you might have a zombie process now."
         )
 
+    reader.close()
     return outcome

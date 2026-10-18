@@ -68,7 +68,7 @@ def test_massage_reports_child_errors(task_id, expected_msg):
     assert expected_msg in err_msg
 
 
-def _exit_without_reporting(outcome_queue, task_id):
+def _exit_without_reporting(outcome_conn, task_id):
     pass
 
 
@@ -111,7 +111,7 @@ def test_massage_large_error_is_not_reported_as_timeout():
     assert "massage-test: huge error" in err_msg
 
 
-def _hang(outcome_queue, task_id):
+def _hang(outcome_conn, task_id):
     import time
 
     time.sleep(60)
@@ -121,3 +121,19 @@ def test_massage_timeout(monkeypatch):
     monkeypatch.setattr(benchmark_utils, "run_massage", _hang)
     outcome, _ = massage_task_within_subprocess("massage-test.ok", timeout=2, kill_timeout=2)
     assert outcome == "timeout"
+
+
+def _die_mid_send(outcome_conn, task_id):
+    import os
+    import struct
+
+    # frame header announcing 1 MB, followed by only a few bytes of payload
+    os.write(outcome_conn.fileno(), struct.pack("!i", 1_000_000) + b"x" * 100)
+    os._exit(3)
+
+
+def test_massage_child_dies_mid_send(monkeypatch):
+    monkeypatch.setattr(benchmark_utils, "run_massage", _die_mid_send)
+    outcome, err_msg = massage_task_within_subprocess("massage-test.ok", timeout=10, kill_timeout=1)
+    assert outcome == "exception"
+    assert "exited with code 3 without reporting" in err_msg
