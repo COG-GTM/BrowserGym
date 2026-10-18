@@ -12,7 +12,7 @@ import browsergym.core.action
 from browsergym.core.action.highlevel import HighLevelActionSet
 from browsergym.core.action.python import PythonActionSet
 from browsergym.core.constants import BROWSERGYM_ID_ATTRIBUTE as BID_ATTR
-from browsergym.utils.obs import flatten_dom_to_str
+from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_str
 
 __SLOW_MO = 1000 if "DISPLAY_BROWSER" in os.environ else None
 __HEADLESS = False if "DISPLAY_BROWSER" in os.environ else True
@@ -184,6 +184,7 @@ def test_active_page():
 
 
 DELAYED_UPDATES_PAGE = f"file://{__DATA_DIR}/delayed_updates.html"
+DELAYED_UPDATES_IFRAME_PAGE = f"file://{__DATA_DIR}/delayed_updates_iframe.html"
 
 
 def _pre_observation_wait(info):
@@ -198,7 +199,7 @@ def test_pre_observation_delay(adaptive: bool):
         "browsergym/openended",
         task_kwargs={"start_url": DELAYED_UPDATES_PAGE},
         headless=__HEADLESS,
-        slow_mo=__SLOW_MO,
+        slow_mo=__SLOW_MO or 0,  # the task's slow_mo would hide the delayed updates
         timeout=__TIMEOUT,
         action_mapping=action_set.to_python_code,
         pre_observation_delay=delay,
@@ -217,9 +218,9 @@ def test_pre_observation_delay(adaptive: bool):
     # debounced auto-complete: the observation includes the delayed DOM updates
     obs, reward, term, trunc, info = env.step('page.get_by_label("Search:").fill("abc")')
     assert not obs["last_action_error"]
-    dom = flatten_dom_to_str(obs["dom_object"])
-    assert "First suggestion" in dom
-    assert "Second suggestion" in dom
+    axtree = flatten_axtree_to_str(obs["axtree_object"])
+    assert "First suggestion" in axtree
+    assert "Second suggestion" in axtree
     if adaptive:
         assert _pre_observation_wait(info) < delay / 2
 
@@ -228,6 +229,38 @@ def test_pre_observation_delay(adaptive: bool):
     assert not obs["last_action_error"]
     assert obs["url"].endswith("example.html")
     assert "Example Domain" in flatten_dom_to_str(obs["dom_object"])
+
+    env.close()
+
+
+@pytest.mark.parametrize("adaptive", [True, False])
+def test_pre_observation_delay_iframe(adaptive: bool):
+    delay = 3.0
+    action_set = PythonActionSet()
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": DELAYED_UPDATES_IFRAME_PAGE},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO or 0,  # the task's slow_mo would hide the delayed updates
+        timeout=__TIMEOUT,
+        action_mapping=action_set.to_python_code,
+        pre_observation_delay=delay,
+        adaptive_pre_observation_delay=adaptive,
+    )
+    obs, info = env.reset()
+
+    # debounced auto-complete in an iframe, the parent page is idle
+    obs, reward, term, trunc, info = env.step(
+        'page.frame_locator("iframe").get_by_label("Search:").fill("abc")'
+    )
+    assert not obs["last_action_error"]
+    axtree = flatten_axtree_to_str(obs["axtree_object"])
+    assert "First suggestion" in axtree
+    assert "Second suggestion" in axtree
+    if adaptive:
+        assert _pre_observation_wait(info) < delay / 2
+    else:
+        assert _pre_observation_wait(info) >= delay
 
     env.close()
 

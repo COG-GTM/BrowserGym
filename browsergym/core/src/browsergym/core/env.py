@@ -30,8 +30,8 @@ from .task import AbstractBrowserTask
 
 logger = logging.getLogger(__name__)
 
-# Injected in every page to keep track of pending work (short timers, fetch/XHR requests)
-# that may still change the page after an action, see _PAGE_SETTLE_JS.
+# Injected in every frame to keep track of pending work (short timers, fetch/XHR requests) and DOM
+# mutations that may still change the page after an action, see _FRAME_SETTLED_JS.
 _PAGE_ACTIVITY_TRACKER_JS = r"""
 (() => {
     if (window.browsergym_activity) {
@@ -95,36 +95,38 @@ _PAGE_ACTIVITY_TRACKER_JS = r"""
         }
     };
 
+    let lastMutation = performance.now();
+    new MutationObserver(() => {
+        lastMutation = performance.now();
+    }).observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
+
     Object.defineProperty(window, "browsergym_activity", {
         value: {
             setTimeout: nativeSetTimeout,
-            // whether a request is in flight or a timer is due before `horizon`
-            busyUntil: (horizon) => {
-                if (requests > 0) {
-                    return true;
+            // whether no request is in flight, no timer is due within `withinMs`, and the DOM has
+            // not changed for `quietMs`
+            isSettled: (quietMs, withinMs) => {
+                const now = performance.now();
+                if (requests > 0 || now - lastMutation < quietMs) {
+                    return false;
                 }
                 for (const due of timers.values()) {
-                    if (due <= horizon) {
-                        return true;
+                    if (due <= now + withinMs) {
+                        return false;
                     }
                 }
-                return false;
+                return true;
             },
         },
     });
 })();
 """
 
-# Resolves once the page has rendered two animation frames, has no request in flight nor timer due
-# within the budget, and its DOM has seen no mutation for `quietMs`, or after `maxMs` at the latest.
-_PAGE_SETTLE_JS = r"""
-async ([quietMs, maxMs]) => {
+# Resolves once the page has rendered two animation frames.
+_WAIT_ANIMATION_FRAMES_JS = r"""
+async () => {
     const activity = window.browsergym_activity;
     const setTimeout_ = activity ? activity.setTimeout : window.setTimeout.bind(window);
-    const busyUntil = activity ? activity.busyUntil : () => false;
-    const start = performance.now();
-    const deadline = start + maxMs;
-    const sleep = (ms) => new Promise((resolve) => setTimeout_(resolve, ms));
     // rAF does not fire in background pages, hence the timer
     const nextFrame = () => new Promise((resolve) => {
         setTimeout_(resolve, 50);
@@ -132,24 +134,14 @@ async ([quietMs, maxMs]) => {
     });
     await nextFrame();
     await nextFrame();
-    let lastMutation = performance.now();
-    const observer = new MutationObserver(() => { lastMutation = performance.now(); });
-    observer.observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
-    try {
-        while (performance.now() < deadline) {
-            const now = performance.now();
-            const quietFor = now - lastMutation;
-            if (busyUntil(deadline)) {
-                await sleep(Math.min(20, deadline - now));
-            } else if (quietFor < quietMs) {
-                await sleep(Math.min(quietMs - quietFor, deadline - now));
-            } else {
-                return;
-            }
-        }
-    } finally {
-        observer.disconnect();
-    }
+}
+"""
+
+# Whether a frame has no pending work that may still change it, see _PAGE_ACTIVITY_TRACKER_JS.
+_FRAME_SETTLED_JS = r"""
+([quietMs, withinMs]) => {
+    const activity = window.browsergym_activity;
+    return activity ? activity.isSettled(quietMs, withinMs) : true;
 }
 """
 
@@ -224,7 +216,7 @@ class BrowserEnv(gym.Env, ABC):
             action_mapping: if set, the environment will use this function to map every received action to executable Python code.
             use_raw_page_output: if set, the environment will use the raw page output instead of the default processing.
             pre_observation_delay: float = 0.5, number of seconds to wait before starting to extract the observation. This can be important if there are some auto-complete menu that may appear after filling a field.
-            adaptive_pre_observation_delay: if set (default), the delay ends as soon as the active page has settled (two animation frames rendered, no fetch/XHR request in flight, no setTimeout callback due within the delay, and no DOM mutation for 100 ms), and `pre_observation_delay` is only the upper bound. Steps that trigger a navigation still wait the full delay. If not set, the environment always sleeps `pre_observation_delay` seconds.
+            adaptive_pre_observation_delay: if set (default), the delay ends as soon as the active page and its iframes have settled (two animation frames rendered, no fetch/XHR request in flight, no setTimeout callback due within the delay, and no DOM mutation for 100 ms), and `pre_observation_delay` is only the upper bound. Steps that trigger a navigation still wait the full delay. If not set, the environment always sleeps `pre_observation_delay` seconds.
         """
         super().__init__()
         self.task_entrypoint = task_entrypoint
@@ -711,7 +703,10 @@ document.addEventListener("visibilitychange", () => {
             f"Waiting at most {self.pre_observation_delay} seconds for the page to settle before extracting observation"
         )
         deadline = time.monotonic() + self.pre_observation_delay
-        settled_page = None
+        try:
+            self.page.evaluate(_WAIT_ANIMATION_FRAMES_JS)
+        except playwright.sync_api.Error:
+            pass
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -720,18 +715,22 @@ document.addEventListener("visibilitychange", () => {
             if self._navigation_requested:
                 time.sleep(remaining)
                 return
-            page = self.page
-            # stop once the active page (which JS callbacks may have changed) has settled
-            if page is settled_page:
-                return
-            try:
-                page.evaluate(_PAGE_SETTLE_JS, [100, int(remaining * 1000)])
-                settled_page = page
-            except playwright.sync_api.Error:
-                # page closed or navigated during the wait, wait out the full delay
-                time.sleep(max(0, deadline - time.monotonic()))
-                return
             self.context.cookies()  # process pending Playwright callbacks (active page changes)
+            if self._is_page_settled(self.page, quiet_ms=100, within_ms=int(remaining * 1000)):
+                return
+            time.sleep(min(0.02, max(0, deadline - time.monotonic())))
+
+    def _is_page_settled(self, page: playwright.sync_api.Page, quiet_ms: int, within_ms: int):
+        # child frames are part of the observation too, and track their own pending work
+        for frame in page.frames:
+            try:
+                if not frame.evaluate(_FRAME_SETTLED_JS, [quiet_ms, within_ms]):
+                    return False
+            except playwright.sync_api.Error:
+                # the main frame is navigating or closed, child frames may just be detached
+                if frame == page.main_frame:
+                    return False
+        return True
 
     def _wait_dom_loaded(self):
         for page in self.context.pages:
