@@ -191,7 +191,7 @@ def extract_screenshot(page: playwright.sync_api.Page):
 
 # we could handle more data items here if needed
 __BID_EXPR = r"([a-zA-Z0-9]+)"
-__DATA_REGEXP = re.compile(r"^browsergym_id_" + __BID_EXPR + r"\s?" + r"(.*)")
+__DATA_REGEXP = re.compile(r"^browsergym_id_" + __BID_EXPR + r"\s?" + r"(.*)", flags=re.DOTALL)
 
 
 def extract_data_items_from_aria(string: str, log_level: int = logging.NOTSET):

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Iframe whose bid gets stripped</title>
+</head>
+<body>
+    <button id="main-button">Main frame button</button>
+    <iframe id="stripped-iframe" srcdoc="<button id='inner-button'>Inner button</button>"></iframe>
+    <script>
+        // Simulates a page script that rewrites iframes behind BrowserGym's back: every time a
+        // "bid" attribute lands on an iframe it is removed again, so the child frame ends up
+        // without a bid by the time BrowserGym tries to recurse into it.
+        new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                const target = mutation.target;
+                if (target.tagName === "IFRAME" && target.hasAttribute("bid")) {
+                    target.removeAttribute("bid");
+                }
+            }
+        }).observe(document.documentElement, {
+            subtree: true,
+            attributes: true,
+            attributeFilter: ["bid"],
+        });
+    </script>
+</body>
+</html>

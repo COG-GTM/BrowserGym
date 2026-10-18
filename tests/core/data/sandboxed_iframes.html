@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sandboxed iframes</title>
+</head>
+<body>
+    <button id="main-button">Main frame button</button>
+    <!-- scripts blocked (empty sandbox): BrowserGym must skip marking this frame -->
+    <iframe id="sandbox-empty" sandbox srcdoc="<button id='sandbox-empty-button'>Blocked</button>"></iframe>
+    <!-- scripts blocked (sandbox without allow-scripts): BrowserGym must skip marking this frame -->
+    <iframe id="sandbox-no-scripts" sandbox="allow-same-origin allow-forms" srcdoc="<button id='sandbox-no-scripts-button'>Blocked</button>"></iframe>
+    <!-- scripts allowed: BrowserGym must mark this frame -->
+    <iframe id="sandbox-scripts" sandbox="allow-scripts allow-same-origin" srcdoc="<button id='sandbox-scripts-button'>Allowed</button>"></iframe>
+</body>
+</html>
