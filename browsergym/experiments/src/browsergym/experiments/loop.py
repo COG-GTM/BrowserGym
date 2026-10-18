@@ -671,6 +671,14 @@ def _is_debugging():
     return sys.gettrace() is not None
 
 
+def _load_gzip_pickle(f):
+    obj = pickle.load(f)
+    # pickle.load stops at the STOP opcode; drain the stream so gzip validates its CRC/size trailer
+    while f.read(1 << 16):
+        pass
+    return obj
+
+
 def _load_result_file(path: Path, opener, loader, mode="rb"):
     """Load a result file, raising CorruptedResultFileError if it is empty or truncated."""
     with opener(path, mode) as f:
@@ -723,33 +731,31 @@ class ExpResult:
     def get_step_info(self, step: int) -> StepInfo:
         """Load the step info from the file and return it."""
         if self._steps_info.get(step, None) is None:
-            self._steps_info[step] = _load_result_file(
-                self.exp_dir / f"step_{step}.pkl.gz", gzip.open, pickle.load
+            # fully hydrate before caching, so a missing/corrupted companion file can be retried
+            step_info = _load_result_file(
+                self.exp_dir / f"step_{step}.pkl.gz", gzip.open, _load_gzip_pickle
             )
-            if self._steps_info[step].obs:
-                if "screenshot" not in self._steps_info[step].obs:
+            if step_info.obs:
+                if "screenshot" not in step_info.obs:
                     try:
-                        self._steps_info[step].obs["screenshot"] = np.array(
+                        step_info.obs["screenshot"] = np.array(
                             self.get_screenshot(step), dtype=np.uint8
                         )
                     except FileNotFoundError:
                         pass
-                if "screenshot_som" not in self._steps_info[step].obs:
+                if "screenshot_som" not in step_info.obs:
                     try:
-                        self._steps_info[step].obs["screenshot_som"] = np.array(
+                        step_info.obs["screenshot_som"] = np.array(
                             self.get_screenshot(step, som=True), dtype=np.uint8
                         )
                     except FileNotFoundError:
                         pass
                 # if goal_object is set to None, it indicates it has been saved into a separate file
-                if (
-                    "goal_object" in self._steps_info[step].obs
-                    and self._steps_info[step].obs["goal_object"] is None
-                ):
-                    goal_object = _load_result_file(
-                        self.exp_dir / "goal_object.pkl.gz", gzip.open, pickle.load
+                if "goal_object" in step_info.obs and step_info.obs["goal_object"] is None:
+                    step_info.obs["goal_object"] = _load_result_file(
+                        self.exp_dir / "goal_object.pkl.gz", gzip.open, _load_gzip_pickle
                     )
-                    self._steps_info[step].obs["goal_object"] = goal_object
+            self._steps_info[step] = step_info
 
         return self._steps_info[step]
 

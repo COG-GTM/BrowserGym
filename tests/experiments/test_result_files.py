@@ -135,3 +135,26 @@ def test_process_killed_mid_write_never_exposes_partial_file(tmp_path):
     step = StepInfo(step=0, obs={"goal_object": [{"type": "text", "text": "goal"}]})
     step.save_step_info(tmp_path)
     assert result.get_step_info(1).obs["goal_object"] == [{"type": "text", "text": "goal"}]
+
+
+def test_gzip_pickle_missing_trailer_is_corrupted(tmp_path):
+    _save_episode(tmp_path)
+    target = tmp_path / "step_1.pkl.gz"
+    target.write_bytes(target.read_bytes()[:-8])
+
+    with pytest.raises(CorruptedResultFileError):
+        ExpResult(tmp_path).get_step_info(1)
+
+
+def test_step_is_not_cached_until_goal_object_loads(tmp_path):
+    _save_episode(tmp_path)
+    goal_file = tmp_path / "goal_object.pkl.gz"
+    good_bytes = goal_file.read_bytes()
+    goal_file.write_bytes(good_bytes[:20])
+
+    result = ExpResult(tmp_path)
+    with pytest.raises(CorruptedResultFileError):
+        result.get_step_info(1)
+
+    goal_file.write_bytes(good_bytes)
+    assert result.get_step_info(1).obs["goal_object"] == [{"type": "text", "text": "goal"}]
