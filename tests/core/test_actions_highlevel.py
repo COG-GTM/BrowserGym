@@ -3,6 +3,7 @@ import os
 import pathlib
 import platform
 import re
+import typing
 
 import bs4
 import gymnasium as gym
@@ -1361,3 +1362,301 @@ def test_iframe_bid():
 
 if __name__ == "__main__":
     test_scroll()
+
+
+def _custom_action(element: str, times: int = 1):
+    """
+    Perform a custom action on an element a number of times.
+
+    Examples:
+        _custom_action('a51')
+        _custom_action('b22', 2)
+    """
+    pass
+
+
+def _other_custom_action(text: str | None = None, flags: list[str] = []):
+    """
+    Perform another custom action.
+
+    Examples:
+        _other_custom_action("hello")
+    """
+    pass
+
+
+def test_action_set_config_errors():
+    with pytest.raises(ValueError, match="'action_subsets' is empty"):
+        HighLevelActionSet(subsets=[])
+
+    with pytest.raises(ValueError, match="'custom_actions' is empty"):
+        HighLevelActionSet(subsets=["custom"])
+
+    with pytest.raises(ValueError, match="'custom_actions' is empty"):
+        HighLevelActionSet(subsets=["bid", "custom"], custom_actions=[])
+
+    with pytest.raises(ValueError, match="Unknown high-level action subspace: nonexistent"):
+        HighLevelActionSet(subsets=["nonexistent"])
+
+    def click(bid: str):
+        """
+        Shadows the built-in click action.
+
+        Examples:
+            click('a51')
+        """
+        pass
+
+    with pytest.raises(ValueError, match="Duplicated action 'click'"):
+        HighLevelActionSet(subsets=["bid", "custom"], custom_actions=[click])
+
+
+def test_action_set_subsets():
+    action_set = HighLevelActionSet(subsets="nav")
+    assert list(action_set.action_set.keys()) == ["noop", "go_back", "go_forward", "goto"]
+
+    # actions shared between subsets are only included once
+    action_set = HighLevelActionSet(subsets=["bid", "miniwob_all"])
+    assert list(action_set.action_set.keys()).count("click") == 1
+
+    action_set = HighLevelActionSet(
+        subsets=["chat", "custom"], custom_actions=[_custom_action, _custom_action]
+    )
+    assert list(action_set.action_set.keys()) == ["noop", "send_msg_to_user", "_custom_action"]
+
+    custom = action_set.action_set["_custom_action"]
+    assert custom.signature == "_custom_action(element: str, times: int = 1)"
+    assert custom.description == "Perform a custom action on an element a number of times."
+    assert custom.examples == ["_custom_action('a51')", "_custom_action('b22', 2)"]
+
+    code = action_set.to_python_code("_custom_action('a51', 3)")
+    assert "def _custom_action(element: str, times: int = 1):" in code
+    assert code.endswith("_custom_action('a51', 3)\n")
+
+
+@pytest.mark.parametrize(
+    "api,schema_key",
+    [("openai", "parameters"), ("anthropic", "input_schema")],
+)
+def test_to_tool_description(api, schema_key):
+    action_set = HighLevelActionSet(subsets=["bid", "tab"])
+    tools = action_set.to_tool_description(api=api)
+    tools_by_name = {tool["name"]: tool for tool in tools}
+
+    assert [tool["name"] for tool in tools] == list(action_set.action_set.keys())
+    for tool in tools:
+        if api == "openai":
+            assert tool["type"] == "function"
+            assert set(tool.keys()) == {"type", "name", "description", "parameters"}
+        else:
+            assert set(tool.keys()) == {"name", "description", "input_schema"}
+        assert tool[schema_key]["type"] == "object"
+        assert tool["description"].startswith(action_set.action_set[tool["name"]].description)
+
+    click_schema = tools_by_name["click"][schema_key]
+    assert click_schema["required"] == ["bid"]
+    assert click_schema["properties"]["bid"] == {"type": "string"}
+    assert click_schema["properties"]["button"] == {
+        "type": "string",
+        "enum": ["left", "middle", "right"],
+        "default": "left",
+    }
+    assert click_schema["properties"]["modifiers"] == {
+        "type": "array",
+        "items": {
+            "type": "string",
+            "enum": ["Alt", "Control", "ControlOrMeta", "Meta", "Shift"],
+        },
+        "default": [],
+    }
+
+    upload_schema = tools_by_name["upload_file"][schema_key]
+    assert upload_schema["required"] == ["bid", "file"]
+    assert upload_schema["properties"]["file"] == {
+        "anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]
+    }
+
+    assert tools_by_name["tab_focus"][schema_key]["properties"]["index"] == {"type": "integer"}
+    assert tools_by_name["noop"][schema_key]["required"] == []
+
+    assert "\n\nExamples:\n- " in tools_by_name["click"]["description"]
+    for example in action_set.action_set["click"].examples:
+        assert f"- {example}\n" in tools_by_name["click"]["description"]
+
+    tools_no_examples = action_set.to_tool_description(api=api, add_examples=False)
+    for tool in tools_no_examples:
+        assert tool["description"] == action_set.action_set[tool["name"]].description
+
+    # descriptors are independent copies
+    click_schema["required"].append("button")
+    fresh_tools = {tool["name"]: tool for tool in action_set.to_tool_description(api=api)}
+    assert fresh_tools["click"][schema_key]["required"] == ["bid"]
+
+
+def test_to_tool_description_custom_actions():
+    action_set = HighLevelActionSet(
+        subsets=["custom"], custom_actions=[_custom_action, _other_custom_action]
+    )
+    tools = action_set.to_tool_description(api="openai")
+    tools_no_examples = action_set.to_tool_description(api="openai", add_examples=False)
+    assert [tool["name"] for tool in tools] == [
+        "noop",
+        "_custom_action",
+        "_other_custom_action",
+    ]
+
+    custom_tool = tools[1]
+    assert custom_tool["parameters"] == {
+        "type": "object",
+        "properties": {
+            "element": {"type": "string"},
+            "times": {"type": "integer", "default": 1},
+        },
+        "required": ["element"],
+    }
+    assert custom_tool["description"] == (
+        "Perform a custom action on an element a number of times.\n\n"
+        "Examples:\n"
+        "- _custom_action('a51')\n"
+        "- _custom_action('b22', 2)\n"
+    )
+    assert tools[2]["parameters"] == {
+        "type": "object",
+        "properties": {
+            "text": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None},
+            "flags": {"type": "array", "items": {"type": "string"}, "default": []},
+        },
+        "required": [],
+    }
+    assert tools_no_examples[2]["description"] == "Perform another custom action."
+
+    anthropic_tools = action_set.to_tool_description(api="anthropic")
+    assert anthropic_tools[1]["input_schema"] == custom_tool["parameters"]
+
+
+def _annotated_custom_action(
+    count: "int",
+    value: typing.Annotated[int, {"ge": 0}],
+    mode: typing.Optional[typing.Literal["a", "b"]] = None,
+):
+    """
+    Custom action with postponed, annotated and optional annotations.
+
+    Examples:
+        _annotated_custom_action(1, 2)
+    """
+    pass
+
+
+def test_to_tool_description_annotations():
+    action_set = HighLevelActionSet(subsets=["custom"], custom_actions=[_annotated_custom_action])
+    tool = action_set.to_tool_description(api="anthropic")[1]
+    assert tool["input_schema"] == {
+        "type": "object",
+        "properties": {
+            "count": {"type": "integer"},
+            "value": {"type": "integer"},
+            "mode": {
+                "anyOf": [{"type": "string", "enum": ["a", "b"]}, {"type": "null"}],
+                "default": None,
+            },
+        },
+        "required": ["count", "value"],
+    }
+
+
+def _unresolvable_custom_action(
+    count: "int", other: "NotAType" = "x", expr: "__import__('os').getcwd()" = "y"
+):
+    """
+    Custom action with an annotation that cannot be resolved.
+
+    Examples:
+        _unresolvable_custom_action(1)
+    """
+    pass
+
+
+def test_to_tool_description_unresolvable_annotation():
+    action_set = HighLevelActionSet(
+        subsets=["custom"], custom_actions=[_unresolvable_custom_action]
+    )
+    # plain names still resolve, unresolved annotations fall back to string
+    assert action_set.to_tool_description()[1]["parameters"] == {
+        "type": "object",
+        "properties": {
+            "count": {"type": "integer"},
+            "other": {"type": "string", "default": "x"},
+            # expressions are never evaluated
+            "expr": {"type": "string", "default": "y"},
+        },
+        "required": ["count"],
+    }
+
+
+@pytest.mark.parametrize("multiaction", [True, False])
+def test_describe_and_example_action(multiaction):
+    action_set = HighLevelActionSet(subsets=["bid", "nav"], multiaction=multiaction)
+
+    abstract = action_set.example_action(abstract=True)
+    concrete = action_set.example_action(abstract=False)
+    all_examples = [
+        example for action in action_set.action_set.values() for example in action.examples
+    ]
+
+    if multiaction:
+        assert abstract == "One or several actions, separated by new lines."
+        lines = concrete.split("\n")
+        assert 1 <= len(lines) <= 3
+        assert all(line in all_examples for line in lines)
+        assert len(action_set.example_action(abstract=False, max_examples=1).split("\n")) == 1
+    else:
+        single_action = "One single action to be executed. You can only use one action at a time."
+        assert abstract == single_action
+        assert "\n" not in concrete
+        fill_examples = action_set.action_set["fill"].examples
+        click_examples = action_set.action_set["click"].examples
+        assert concrete in fill_examples + click_examples
+
+    # deterministic
+    assert action_set.example_action(abstract=False) == concrete
+
+    description = action_set.describe()
+    assert description.startswith(f"\n{len(action_set.action_set)} different types of actions")
+    for action in action_set.action_set.values():
+        assert f"{action.signature}\n" in description
+        assert f"    Description: {action.description}\n" in description
+        for example in action.examples:
+            assert f"        {example}\n" in description
+    if multiaction:
+        assert "Multiple actions can be provided at once" in description
+        assert "Only a single action can be provided at once." not in description
+    else:
+        assert "Only a single action can be provided at once." in description
+        assert "Multiple actions can be provided at once" not in description
+    assert description.endswith(f" Example:\n{concrete}\n")
+
+    short_description = action_set.describe(with_long_description=False, with_examples=False)
+    assert "Description:" not in short_description
+    assert "Examples:" not in short_description
+    for action in action_set.action_set.values():
+        assert f"{action.signature}\n" in short_description
+
+
+def test_example_action_without_examples():
+    for multiaction in [True, False]:
+        action_set = HighLevelActionSet(
+            subsets=["custom"], custom_actions=[_custom_action], multiaction=multiaction
+        )
+        # no fill/click/mouse_click/keyboard_type: fall back to all action examples
+        noop_examples = action_set.action_set["noop"].examples
+        custom_examples = action_set.action_set["_custom_action"].examples
+        all_examples = noop_examples + custom_examples
+        for line in action_set.example_action(abstract=False).split("\n"):
+            assert line in all_examples
+
+        for action in action_set.action_set.values():
+            action.examples = []
+        assert action_set.example_action(abstract=False) == ""
+        description = action_set.describe()
+        assert "Example" not in description
