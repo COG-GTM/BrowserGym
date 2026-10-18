@@ -27,23 +27,31 @@ class Chat:
         self.browser = pw.chromium.launch(
             headless=headless, args=[f"--window-size={chat_size[0]},{chat_size[1]}"]
         )
-        self.context = self.browser.new_context(
-            no_viewport=True,
-            record_video_dir=Path(record_video_dir) / "chat_video" if record_video_dir else None,
-            record_video_size=dict(width=chat_size[0], height=chat_size[1]),
-        )
-        self.page = self.context.new_page()
-        self.recording_start_time = time.time() if record_video_dir else None
+        self.context = None
+        try:
+            self.context = self.browser.new_context(
+                no_viewport=True,
+                record_video_dir=(
+                    Path(record_video_dir) / "chat_video" if record_video_dir else None
+                ),
+                record_video_size=dict(width=chat_size[0], height=chat_size[1]),
+            )
+            self.page = self.context.new_page()
+            self.recording_start_time = time.time() if record_video_dir else None
 
-        # setup the chat page
-        self.page.expose_function(
-            "send_user_message", lambda msg: self._js_user_message_received_callback(msg=msg)
-        )
+            # setup the chat page
+            self.page.expose_function(
+                "send_user_message", lambda msg: self._js_user_message_received_callback(msg=msg)
+            )
 
-        if modern:
-            self.page.set_content(get_chatbox_modern(CHATBOX_DIR))
-        else:
-            self.page.set_content(get_chatbox_classic(CHATBOX_DIR))
+            if modern:
+                self.page.set_content(get_chatbox_modern(CHATBOX_DIR))
+            else:
+                self.page.set_content(get_chatbox_classic(CHATBOX_DIR))
+        except BaseException:
+            # the caller never gets a handle on a partially built chat, release it here
+            self.close()
+            raise
 
     def _js_user_message_received_callback(self, msg: str):
         """Callback function for when a user message is received in the chatbox"""
@@ -73,8 +81,17 @@ class Chat:
         logger.info("Message received.")
 
     def close(self):
-        self.context.close()
-        self.browser.close()
+        """Close the chat's browser context and browser, releasing both even if one fails."""
+        for attr in ("context", "browser"):
+            resource = getattr(self, attr, None)
+            if resource is None:
+                continue
+            try:
+                resource.close()
+            except Exception:
+                logger.exception(f"Error while closing the chat's {attr}, ignoring.")
+            finally:
+                setattr(self, attr, None)
 
 
 def get_chatbox_modern(chatbox_dir) -> str:

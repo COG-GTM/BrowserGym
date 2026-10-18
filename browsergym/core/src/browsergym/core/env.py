@@ -202,33 +202,41 @@ class BrowserEnv(gym.Env, ABC):
         # action space
         self.action_space = Unicode()
 
+    def _teardown(self):
+        """Release the task, chat, browser context and browser of the current episode.
+
+        Each resource is released independently and set to None, so that a failure (or a
+        partially initialized environment) never prevents the remaining resources from being
+        released, and the environment can always be reset again.
+        """
+        for attr, release in (
+            ("task", "teardown"),  # stop the task
+            ("chat", "close"),  # close the chat
+            ("context", "close"),  # close the browser context
+            ("browser", "close"),  # close the browser
+        ):
+            resource = getattr(self, attr)
+            if resource is None:
+                continue
+            try:
+                getattr(resource, release)()
+            except Exception:
+                logger.exception(f"Error while releasing the environment's {attr}, ignoring.")
+            finally:
+                setattr(self, attr, None)
+
+        self.page = None
+        self.page_history = {}
+
     def close(self):
-        # stop the task
-        if self.task:
-            self.task.teardown()
-            self.task = None
-        # close the chat
-        if self.chat:
-            self.chat.close()
-            self.chat = None
-        # close the browser context
-        if self.context:
-            self.context.close()
-            self.context = None
-        # close the browser
-        if self.browser:
-            self.browser.close()
-            self.browser = None
+        self._teardown()
 
     def reset(self, seed=None, *args, **kwargs):
         super().reset(seed=seed, *args, **kwargs)
         self.np_random = None  # make sure all randomness is handled by the task
 
-        if self.task:
-            self.task.teardown()
-            self.context.close()
-            self.chat.close()
-            self.browser.close()
+        # release the previous episode's resources, if any
+        self._teardown()
 
         # create a new task
         self.task = self.task_entrypoint(seed=seed, **self.task_kwargs)
