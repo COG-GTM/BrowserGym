@@ -25,7 +25,17 @@ export function EmptyState({
   );
 }
 
-export function ErrorState({ error, onRetry, className }: { error: unknown; onRetry?: () => void; className?: string }) {
+export function ErrorState({
+  error,
+  onRetry,
+  className,
+  title = "Couldn't reach the Side API",
+}: {
+  error: unknown;
+  onRetry?: () => void;
+  className?: string;
+  title?: string;
+}) {
   const message = error instanceof Error ? error.message : String(error);
   return (
     <div
@@ -34,7 +44,7 @@ export function ErrorState({ error, onRetry, className }: { error: unknown; onRe
     >
       <AlertTriangle className="size-5 shrink-0 text-destructive" />
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium">Couldn&apos;t reach the Side API</p>
+        <p className="text-sm font-medium">{title}</p>
         <p className="truncate text-xs text-muted-foreground">{message}</p>
       </div>
       {onRetry && (

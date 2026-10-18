@@ -73,17 +73,26 @@ function NewRunForm() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
+  const fromRunId = params.get("from");
+  const [prefill, setPrefill] = useState<{ state: "idle" | "loading" } | { state: "error"; error: Error }>(
+    fromRunId ? { state: "loading" } : { state: "idle" },
+  );
+  const [prefillAttempt, setPrefillAttempt] = useState(0);
 
   const benchmarks = useMemo(() => [...new Set((allTasks.data ?? []).map((t) => t.benchmark))], [allTasks.data]);
   const selectedTask = allTasks.data?.find((t) => t.id === taskId);
   const selectedAgent = agents.data?.find((a) => a.type === agentType);
   const isOpenended = taskId === OPENENDED_TASK_ID;
 
-  // "Run again" links here with ?from=<run id>: prefill the form from that run's configuration.
-  const fromRunId = params.get("from");
+  // "Run again" links here with ?from=<run id>: the form stays hidden until that run's configuration
+  // has been applied, so late responses can't overwrite user edits.
   useEffect(() => {
-    if (!fromRunId) return;
+    if (!fromRunId) {
+      setPrefill({ state: "idle" });
+      return;
+    }
     let stale = false;
+    setPrefill({ state: "loading" });
     getApi()
       .getRun(fromRunId)
       .then((run) => {
@@ -95,18 +104,25 @@ function NewRunForm() {
         setUseScreenshot(run.agent.use_screenshot ?? false);
         if (run.task_id === OPENENDED_TASK_ID) setGoal(run.goal ?? "");
         if (run.max_steps) setMaxSteps(run.max_steps);
+        setPrefill({ state: "idle" });
       })
-      .catch(() => {});
+      .catch((error: Error) => !stale && setPrefill({ state: "error", error }));
     return () => {
       stale = true;
     };
-  }, [fromRunId]);
+  }, [fromRunId, prefillAttempt]);
 
+  // Validate the model only once the agent catalog is known, keeping a prefilled model if it's still offered.
   useEffect(() => {
-    const models = selectedAgent?.models ?? [];
+    if (!selectedAgent) return;
+    const models = selectedAgent.models ?? [];
     setModel((m) => (m && models.includes(m) ? m : (models[0] ?? null)));
-    if (agentType === "openai" || agentType === "anthropic") setUseScreenshot(true);
-  }, [selectedAgent, agentType]);
+  }, [selectedAgent]);
+
+  function selectAgent(type: AgentType) {
+    setAgentType(type);
+    if (type === "openai" || type === "anthropic") setUseScreenshot(true);
+  }
 
   const errors: Record<string, string> = {};
   if (!selectedTask && allTasks.data) errors.task = "Pick a task";
@@ -140,6 +156,30 @@ function NewRunForm() {
   }
 
   const fieldError = (k: string) => touched && errors[k] ? <p className="text-xs text-destructive">{errors[k]}</p> : null;
+
+  if (prefill.state === "loading") {
+    return (
+      <div className="space-y-4" aria-busy="true" data-testid="rerun-loading">
+        <p className="text-sm text-muted-foreground">Loading configuration from run {fromRunId}…</p>
+        <Skeleton className="h-64 w-full rounded-xl" />
+        <Skeleton className="h-40 w-full rounded-xl" />
+      </div>
+    );
+  }
+  if (prefill.state === "error") {
+    return (
+      <div className="space-y-3">
+        <ErrorState
+          title={`Couldn't load run ${fromRunId} to prefill this form`}
+          error={prefill.error}
+          onRetry={() => setPrefillAttempt((n) => n + 1)}
+        />
+        <Button variant="outline" size="sm" onClick={() => router.replace("/runs/new")}>
+          Start from scratch
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={submit} className="grid gap-6 lg:grid-cols-[1fr_340px]" noValidate>
@@ -249,7 +289,7 @@ function NewRunForm() {
                 role="radio"
                 aria-checked={a.type === agentType}
                 key={a.type}
-                onClick={() => setAgentType(a.type)}
+                onClick={() => selectAgent(a.type)}
                 className={cn(
                   "flex items-start gap-3 rounded-xl border p-3 text-left transition-all hover:bg-muted/50",
                   a.type === agentType && "border-primary bg-primary/5 ring-1 ring-primary",
