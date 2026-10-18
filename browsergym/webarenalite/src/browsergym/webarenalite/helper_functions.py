@@ -23,6 +23,9 @@ from webarena.llms.providers.openai_utils import (
     generate_from_openai_chat_completion,
 )
 
+# (connect, read) timeout in seconds for calls to the WebArena site APIs during evaluation
+REQUEST_TIMEOUT = (10, 60)
+
 
 def shopping_get_auth_token() -> str:
     response = requests.post(
@@ -34,7 +37,9 @@ def shopping_get_auth_token() -> str:
                 "password": ACCOUNTS["shopping_site_admin"]["password"],
             }
         ),
+        timeout=REQUEST_TIMEOUT,
     )
+    response.raise_for_status()
     token: str = response.json()
     return token
 
@@ -53,8 +58,10 @@ def shopping_get_latest_order_url() -> str:
         "searchCriteria[pageSize]": "1",
     }
 
-    response = requests.get(f"{SHOPPING}/rest/V1/orders", params=params, headers=header)
-    assert response.status_code == 200
+    response = requests.get(
+        f"{SHOPPING}/rest/V1/orders", params=params, headers=header, timeout=REQUEST_TIMEOUT
+    )
+    response.raise_for_status()
     response_obj = response.json()["items"][0]
     order_id = int(response_obj["increment_id"])
     order_url = f"{SHOPPING}/sales/order/view/order_id/{order_id}/"
@@ -67,8 +74,10 @@ def shopping_get_sku_latest_review_author(sku: str) -> str:
         "Authorization": f"Bearer {shopping_get_auth_token()}",
         "Content-Type": "application/json",
     }
-    response = requests.get(f"{SHOPPING}/rest/V1/products/{sku}/reviews", headers=header)
-    assert response.status_code == 200
+    response = requests.get(
+        f"{SHOPPING}/rest/V1/products/{sku}/reviews", headers=header, timeout=REQUEST_TIMEOUT
+    )
+    response.raise_for_status()
     response_obj = response.json()
     if len(response_obj) == 0:
         return ""
@@ -82,12 +91,16 @@ def shopping_get_sku_latest_review_rating(sku: str) -> str:
         "Authorization": f"Bearer {shopping_get_auth_token()}",
         "Content-Type": "application/json",
     }
-    response = requests.get(f"{SHOPPING}/rest/V1/products/{sku}/reviews", headers=header)
-    assert response.status_code == 200
+    response = requests.get(
+        f"{SHOPPING}/rest/V1/products/{sku}/reviews", headers=header, timeout=REQUEST_TIMEOUT
+    )
+    response.raise_for_status()
     response_obj = response.json()
     if len(response_obj) == 0:
         return ""
-    assert response_obj[0]["ratings"][0]["rating_name"] == "Rating"
+    rating_name = response_obj[0]["ratings"][0]["rating_name"]
+    if rating_name != "Rating":
+        raise ValueError(f"Unexpected review rating name for SKU {sku!r}: {rating_name!r}")
     rating: str = str(response_obj[-1]["ratings"][0]["percent"])
     return rating
 
@@ -111,33 +124,37 @@ def reddit_get_post_url(url: str) -> str:
 
 
 def gitlab_get_project_memeber_role(page: Page, account_name: str) -> str:
-    # get the account index
-    try:
-        account_idx = page.evaluate(
-            f"""(() => {{
-                const elements = document.querySelectorAll("td[data-label='Account'] span.gl-avatar-labeled-sublabel");
-                let index = -1;  // Default value if not found
+    """Return the role of `account_name` on the project members page, or "" if not a member.
 
-                for(let i = 0; i < elements.length; i++) {{
-                    if(elements[i].outerText === '@{account_name}') {{
-                        index = i;
-                        break;
-                    }}
-                }}
+    Page errors are not swallowed: they propagate so that a failed evaluation is not
+    mistaken for the agent not having performed the task.
+    """
+    account_idx: int = page.evaluate(
+        """(accountLabel) => {
+            const elements = document.querySelectorAll("td[data-label='Account'] span.gl-avatar-labeled-sublabel");
+            for (let i = 0; i < elements.length; i++) {
+                if (elements[i].outerText === accountLabel) {
+                    return i;
+                }
+            }
+            return -1;
+        }""",
+        f"@{account_name}",
+    )
+    if account_idx == -1:
+        return ""
 
-                return index;
-            }})()"""
+    role: str | None = page.evaluate(
+        """(index) => {
+            const roles = document.querySelectorAll("td.col-max-role span");
+            return index < roles.length ? roles[index].outerText : null;
+        }""",
+        account_idx,
+    )
+    if role is None:
+        raise RuntimeError(
+            f"GitLab members page lists account @{account_name} but no role cell was found for it"
         )
-
-        # get the role
-        role: str = page.evaluate(
-            f"""(() => {{
-                return document.querySelectorAll("td.col-max-role span")[{account_idx}].outerText;
-            }})()"""
-        )
-    except Exception:
-        role = ""
-
     return role
 
 
