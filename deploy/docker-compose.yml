@@ -22,6 +22,7 @@ services:
       SIDE_NOTIFY_URL: ${SIDE_NOTIFY_URL-http://notifications:8010} # set empty to disable
       SIDE_CORS_ORIGINS: ${SIDE_CORS_ORIGINS:-http://localhost:${SIDE_WEB_PORT:-3000}}
       SIDE_API_APP: ${SIDE_API_APP:-}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
@@ -49,6 +50,7 @@ services:
       SIDE_DATA_DIR: /data
       EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
       SIDE_NOTIFICATIONS_APP: ${SIDE_NOTIFICATIONS_APP:-}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
     volumes:
       - side-data:/data
     healthcheck:
