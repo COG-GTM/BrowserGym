@@ -19,7 +19,14 @@ from browsergym.core.observation import (
     extract_merged_axtree,
     extract_screenshot,
 )
-from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_str
+from browsergym.utils.obs import (
+    _get_coord_str,
+    _process_bid,
+    flatten_axtree_to_str,
+    flatten_dom_to_str,
+    overlay_som,
+    prune_html,
+)
 
 __SLOW_MO = 1000 if "DISPLAY_BROWSER" in os.environ else None
 __HEADLESS = False if "DISPLAY_BROWSER" in os.environ else True
@@ -817,3 +824,242 @@ def test_tags_to_mark():
             tags_to_mark="fdsjkhjk",
             action_mapping=None,
         )
+
+
+def test_prune_html():
+    html = """<html><head><link rel="stylesheet" href="x.css"><style>.k{color:red}</style></head><body>
+<!-- secret comment -->
+<script>alert(1)</script>
+<div bid="a"></div>
+<span bid="b">unwrapped text</span><br>
+<div bid="c" class="k">kept div</div>
+<p bid="d"><i bid="e">nested</i></p>
+<button bid="f">Submit</button>
+</body></html>"""
+
+    pruned = prune_html(html)
+    soup = bs4.BeautifulSoup(pruned, "lxml")
+
+    # comments, useless tags and html/body wrappers are removed
+    assert "secret comment" not in pruned
+    assert "<!--" not in pruned
+    assert "alert(1)" not in pruned
+    assert ".k{color:red}" not in pruned
+    for tag in ("<script", "<style", "<link", "<br", "<html", "<body"):
+        assert tag not in pruned
+
+    # empty bid-only structural tag is dropped
+    assert soup.find(attrs={"bid": "a"}) is None
+
+    # non-empty bid-only structural tags are unwrapped, content is kept
+    assert soup.find(attrs={"bid": "b"}) is None
+    assert soup.find(attrs={"bid": "d"}) is None
+    assert soup.find(attrs={"bid": "e"}) is None
+    assert "unwrapped text" in pruned
+    assert "nested" in pruned
+
+    # structural tags with extra attributes are kept
+    kept_div = soup.find(attrs={"bid": "c"})
+    assert kept_div is not None
+    assert kept_div.name == "div"
+    assert kept_div["class"] == ["k"]
+    assert kept_div.get_text(strip=True) == "kept div"
+
+    # non-structural tags are kept, even with a bid only
+    button = soup.find(attrs={"bid": "f"})
+    assert button is not None
+    assert button.name == "button"
+    assert button.get_text(strip=True) == "Submit"
+
+
+def test_prune_html_multiline_comment():
+    pruned = prune_html("<div bid='a' class='x'>keep<!-- line1\nline2 --></div>")
+    assert "line1" not in pruned
+    assert "line2" not in pruned
+    assert "keep" in pruned
+
+
+@pytest.mark.parametrize(
+    "coord,decimals,expected",
+    [
+        ((1.234, 5.678), 1, "(1.2,5.7)"),
+        ((1.234, 5.678), 0, "(1,6)"),
+        ((1.234, 5.678), 2, "(1.23,5.68)"),
+        ((0, 10, 20.5, 30.25), 1, "(0.0,10.0,20.5,30.2)"),
+        ("(1.234, 5.678)", 1, "(1.2,5.7)"),
+        ("[3, 4.5]", 2, "(3.00,4.50)"),
+    ],
+)
+def test_get_coord_str(coord, decimals, expected):
+    assert _get_coord_str(coord, decimals) == expected
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "with_visible",
+        "with_clickable",
+        "with_center_coords",
+        "with_bounding_box_coords",
+        "with_som",
+        "filter_visible_only",
+        "filter_with_bid_only",
+        "filter_som_only",
+    ],
+)
+def test_process_bid_requires_extra_properties(flag):
+    with pytest.raises(ValueError, match="extra_properties argument required"):
+        _process_bid("1", extra_properties=None, **{flag: True})
+
+
+def test_process_bid_without_extra_properties():
+    assert _process_bid("1", extra_properties=None) == (False, [])
+    assert _process_bid(None, extra_properties=None) == (False, [])
+
+
+def test_process_bid_coord_decimals():
+    extra_properties = {
+        "1": {
+            "visibility": 1.0,
+            "bbox": (10.25, 20.5, 30.0, 40.75),
+            "clickable": False,
+            "set_of_marks": False,
+        },
+        "2": {
+            "visibility": 1.0,
+            "bbox": None,
+            "clickable": False,
+            "set_of_marks": False,
+        },
+    }
+
+    _, attrs = _process_bid(
+        "1",
+        extra_properties=extra_properties,
+        with_center_coords=True,
+        with_bounding_box_coords=True,
+        coord_decimals=2,
+    )
+    assert attrs == ['box="(10.25,20.50,40.25,61.25)"', 'center="(25.25,40.88)"']
+
+    _, attrs = _process_bid(
+        "1",
+        extra_properties=extra_properties,
+        with_center_coords=True,
+        with_bounding_box_coords=True,
+    )
+    assert attrs == ['box="(10,20,40,61)"', 'center="(25,41)"']
+
+    # no coordinates printed when bbox is None
+    _, attrs = _process_bid(
+        "2",
+        extra_properties=extra_properties,
+        with_center_coords=True,
+        with_bounding_box_coords=True,
+        coord_decimals=2,
+    )
+    assert attrs == []
+
+
+def test_flatten_axtree_to_str_requires_extra_properties():
+    AX_tree = {
+        "nodes": [
+            {
+                "nodeId": "1",
+                "role": {"value": "RootWebArea"},
+                "name": {"value": "page"},
+                "childIds": ["2"],
+            },
+            {
+                "nodeId": "2",
+                "role": {"value": "button"},
+                "name": {"value": "Submit"},
+                "browsergym_id": "a",
+                "childIds": [],
+            },
+        ]
+    }
+
+    with pytest.raises(ValueError, match="extra_properties argument required"):
+        flatten_axtree_to_str(AX_tree, extra_properties=None, with_clickable=True)
+
+    # no extra properties needed when no attribute or filter is requested
+    tree_str = flatten_axtree_to_str(AX_tree, extra_properties=None)
+    assert "[a] button 'Submit'" in tree_str
+
+
+def test_overlay_som():
+    height, width = 120, 160
+    screenshot = np.full((height, width, 3), 255, dtype=np.uint8)
+    original = screenshot.copy()
+
+    extra_properties = {
+        "12": {
+            "visibility": 1.0,
+            "bbox": (40, 50, 80, 40),
+            "clickable": True,
+            "set_of_marks": True,
+        },
+        "13": {
+            "visibility": 0.0,
+            "bbox": None,
+            "clickable": False,
+            "set_of_marks": True,
+        },
+        "14": {
+            "visibility": 1.0,
+            "bbox": (5, 100, 30, 15),
+            "clickable": False,
+            "set_of_marks": False,
+        },
+        "15": {
+            "visibility": 1.0,
+            "bbox": (140, 100, 3, 3),
+            "clickable": True,
+            "set_of_marks": True,
+        },
+    }
+
+    som = overlay_som(screenshot, extra_properties)
+
+    assert som.shape == screenshot.shape
+    assert som.dtype == np.uint8
+    # input screenshot is not modified
+    assert np.array_equal(screenshot, original)
+
+    changed = np.any(som != original, axis=-1)
+    assert changed.any()
+
+    # drawing happens on the bbox of the som element (dashed border + tag)
+    x, y, w, h = extra_properties["12"]["bbox"]
+    assert changed[y - 2 : y + 3, x : x + w].any()  # top edge
+    assert changed[y + h - 2 : y + h + 3, x : x + w].any()  # bottom edge
+    assert changed[y : y + h, x - 2 : x + 3].any()  # left edge
+    assert changed[y : y + h, x + w - 2 : x + w + 3].any()  # right edge
+    # the interior of the box (away from the tag) is untouched
+    assert not changed[y + 15 : y + h - 3, x + 30 : x + w - 3].any()
+
+    # non-som elements and too-small boxes are not drawn
+    x, y, w, h = extra_properties["14"]["bbox"]
+    assert not changed[y : y + h + 1, x : x + w + 1].any()
+    x, y, w, h = extra_properties["15"]["bbox"]
+    assert not changed[y : y + h + 1, x : x + w + 1].any()
+
+    # all drawing stays around the som element bbox
+    x, y, w, h = extra_properties["12"]["bbox"]
+    outside = changed.copy()
+    outside[y - 15 : y + h + 3, x - 3 : x + w + 3] = False
+    assert not outside.any()
+
+
+def test_overlay_som_no_marks():
+    screenshot = np.zeros((40, 60, 3), dtype=np.uint8)
+    extra_properties = {
+        "1": {"visibility": 1.0, "bbox": None, "clickable": False, "set_of_marks": True},
+        "2": {"visibility": 1.0, "bbox": (0, 0, 10, 10), "clickable": False, "set_of_marks": False},
+    }
+
+    som = overlay_som(screenshot, extra_properties)
+
+    assert som.shape == screenshot.shape
+    assert np.array_equal(som, screenshot)
