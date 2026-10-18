@@ -8,7 +8,7 @@ import collections
 import html
 import importlib
 import json
-import time
+import logging
 import urllib
 from pathlib import Path
 from typing import Union
@@ -16,6 +16,8 @@ from typing import Union
 from beartype import beartype
 from nltk.tokenize import word_tokenize  # type: ignore
 from playwright.sync_api import CDPSession, Page
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from .helper_functions import (
     PseudoPage,
     gitlab_get_project_memeber_role,
@@ -29,6 +31,82 @@ from .helper_functions import (
 from webarena.browser_env import Action, StateInfo
 
 Trajectory = list[Union[Action, StateInfo]]
+
+logger = logging.getLogger(__name__)
+
+# bounds for waiting on the target page before evaluating locators
+PAGE_LOAD_TIMEOUT_MS = 30_000
+NETWORK_IDLE_TIMEOUT_MS = 5_000
+
+# Playwright error messages that mean the page itself could not be evaluated
+# (closed/crashed target, navigation race), as opposed to a locator that
+# simply did not match anything on the page
+_INFRASTRUCTURE_ERROR_MARKERS = (
+    "Execution context was destroyed",
+    "Cannot find context with specified id",
+    "Target page, context or browser has been closed",
+    "Target closed",
+    "Browser has been closed",
+    "Frame was detached",
+    "Page crashed",
+    "page is navigating",
+)
+
+
+class EvaluationInfrastructureError(RuntimeError):
+    """The evaluator could not inspect the page, so no reward can be computed."""
+
+
+def _is_infrastructure_error(error: BaseException) -> bool:
+    if not isinstance(error, PlaywrightError):
+        return False
+    if isinstance(error, PlaywrightTimeoutError) or type(error).__name__ == "TargetClosedError":
+        return True
+    message = str(error)
+    return any(marker in message for marker in _INFRASTRUCTURE_ERROR_MARKERS)
+
+
+def _wait_for_page_ready(page: Page | PseudoPage) -> None:
+    page.wait_for_load_state("load", timeout=PAGE_LOAD_TIMEOUT_MS)
+    try:
+        page.wait_for_load_state("networkidle", timeout=NETWORK_IDLE_TIMEOUT_MS)
+    except PlaywrightTimeoutError:
+        logger.debug(
+            "Page %s did not reach networkidle within %d ms, evaluating anyway",
+            page.url,
+            NETWORK_IDLE_TIMEOUT_MS,
+        )
+
+
+def _query_page(page: Page | PseudoPage, query, description: str):
+    """Run query(page), retrying once after the page settles on infrastructure errors.
+
+    Raises EvaluationInfrastructureError if the page still cannot be queried, so
+    that the failure is not mistaken for the agent failing the task. Other
+    Playwright errors (e.g. a JS error because the locator matched nothing) are
+    re-raised as-is for the caller to handle.
+    """
+    try:
+        return query(page)
+    except PlaywrightError as e:
+        if not _is_infrastructure_error(e):
+            raise
+        logger.warning(
+            "%s failed on %s with a page error, retrying once after the page settles: %r",
+            description,
+            page.url,
+            e,
+        )
+    try:
+        _wait_for_page_ready(page)
+        return query(page)
+    except PlaywrightError as e:
+        if not _is_infrastructure_error(e):
+            raise
+        logger.error("%s failed on %s after retry: %r", description, page.url, e)
+        raise EvaluationInfrastructureError(
+            f"{description} could not be evaluated on {page.url}: {e!r}"
+        ) from e
 
 
 class Evaluator(object):
@@ -264,34 +342,67 @@ class HTMLContentEvaluator(Evaluator):
             # navigate to that url
             if target_url != "last":
                 page.goto(target_url)
-                time.sleep(3)  # TODO [shuyanzh]: fix this hard-coded sleep
+                _wait_for_page_ready(page)
 
             # empty, use the full page
             if not locator.strip():
-                selected_element = page.content()
+                selected_element = _query_page(
+                    page, lambda p: p.content(), "HTMLContentEvaluator page.content()"
+                )
             # use JS to select the element
             elif locator.startswith("document.") or locator.startswith("[...document."):
                 if "prep_actions" in target:
                     try:
                         for prep_action in target["prep_actions"]:
-                            page.evaluate(f"() => {prep_action}")
-                    except Exception:
-                        pass
+                            _query_page(
+                                page,
+                                lambda p: p.evaluate(f"() => {prep_action}"),
+                                f"HTMLContentEvaluator prep_action {prep_action!r}",
+                            )
+                    except PlaywrightError as e:
+                        logger.warning(
+                            "HTMLContentEvaluator prep_action %r raised on %s, skipping remaining prep_actions: %r",
+                            prep_action,
+                            page.url,
+                            e,
+                        )
                 try:
-                    selected_element = str(page.evaluate(f"() => {locator}"))
+                    selected_element = str(
+                        _query_page(
+                            page,
+                            lambda p: p.evaluate(f"() => {locator}"),
+                            f"HTMLContentEvaluator locator {locator!r}",
+                        )
+                    )
                     if not selected_element:
                         selected_element = ""
-                except Exception:
-                    # the page is wrong, return empty
+                except PlaywrightError as e:
+                    # the locator did not match on this page, return empty
+                    logger.warning(
+                        "HTMLContentEvaluator locator %r raised on %s, using empty content: %r",
+                        locator,
+                        page.url,
+                        e,
+                    )
                     selected_element = ""
             elif locator.startswith("lambda:"):
+                locator = locator[len("lambda:") :]
                 try:
-                    locator = locator.lstrip("lambda:")
-                    selected_element = page.evaluate(locator)
+                    selected_element = _query_page(
+                        page,
+                        lambda p: p.evaluate(locator),
+                        f"HTMLContentEvaluator locator {locator!r}",
+                    )
                     if not selected_element:
                         selected_element = None
-                except Exception:
-                    # the page is wrong, return empty
+                except PlaywrightError as e:
+                    # the locator did not match on this page, return empty
+                    logger.warning(
+                        "HTMLContentEvaluator locator %r raised on %s, using no content: %r",
+                        locator,
+                        page.url,
+                        e,
+                    )
                     selected_element = None
             # run program to call API
             elif locator.startswith("func:"):  # a helper function
