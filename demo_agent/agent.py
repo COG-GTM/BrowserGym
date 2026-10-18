@@ -10,7 +10,7 @@ from PIL import Image
 from browsergym.core.action.highlevel import HighLevelActionSet
 from browsergym.core.action.python import PythonActionSet
 from browsergym.experiments import AbstractAgentArgs, Agent
-from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_str, prune_html
+from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_soup, prune_html
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class DemoAgent(Agent):
             "open_pages_titles": obs["open_pages_titles"],
             "active_page_index": obs["active_page_index"],
             "axtree_txt": flatten_axtree_to_str(obs["axtree_object"]),
-            "pruned_html": prune_html(flatten_dom_to_str(obs["dom_object"])),
+            "pruned_html": prune_html(flatten_dom_to_soup(obs["dom_object"])),
         }
 
     def __init__(
