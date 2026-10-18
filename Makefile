@@ -1,3 +1,34 @@
+# Use `uv run` when uv is available (uv workspace, see `make sync`); otherwise run tools from the
+# active environment (pip install path, see `make install`). Override with `make <target> RUN=`.
+RUN ?= $(if $(shell command -v uv 2>/dev/null),uv run,)
+# Optional Python version for uv, e.g. `make sync PYTHON=3.13`.
+PYTHON ?=
+UV_PYTHON_FLAG = $(if $(PYTHON),--python $(PYTHON),)
+
+sync:
+	@echo "--- 🔄 Syncing uv workspace (browsergym-core + dev tools) ---"
+	uv sync $(UV_PYTHON_FLAG)
+
+sync-all:
+	@echo "--- 🔄 Syncing uv workspace (all browsergym packages + dev tools) ---"
+	uv sync --all-packages $(UV_PYTHON_FLAG)
+
+browsers:
+	@echo "--- 🌐 Installing Playwright Chromium ---"
+	$(RUN) playwright install chromium
+
+lint:
+	@echo "--- 🔍 Linting (ruff + black --check) ---"
+	$(RUN) ruff check .
+	$(RUN) black --check .
+
+fmt:
+	@echo "--- 🎨 Formatting (ruff isort fixes + black) ---"
+	$(RUN) ruff check --select I --fix .
+	$(RUN) black .
+
+test: test-core
+
 install:
 	@echo "--- 🚀 Installing project dependencies ---"
 	pip install -e ./browsergym/core -e ./browsergym/miniwob -e ./browsergym/webarena -e ./browsergym/webarenalite -e ./browsergym/visualwebarena/ -e ./browsergym/experiments -e ./browsergym/assistantbench -e ./browsergym/
@@ -30,7 +61,7 @@ setup-miniwob:
 
 test-core:
 	@echo "--- 🧪 Running tests ---"
-	pytest -n auto ./tests/core
+	$(RUN) pytest -n auto ./tests/core
 
 clean-miniwob:
 	@echo "--- 🧹 Cleaning MiniWoB++ installation ---"
@@ -39,7 +70,13 @@ clean-miniwob:
 
 help:
 	@echo "Available targets:"
-	@echo "  install          - Install project dependencies"
+	@echo "  sync             - uv: install browsergym-core + dev tools (PYTHON=3.x optional)"
+	@echo "  sync-all         - uv: install all browsergym packages + dev tools"
+	@echo "  browsers         - Install Playwright Chromium"
+	@echo "  lint             - Run ruff check + black --check"
+	@echo "  fmt              - Apply ruff import sorting + black"
+	@echo "  test             - Run the offline test suite (core tests)"
+	@echo "  install          - pip: install project dependencies"
 	@echo "  setup-miniwob    - Setup MiniWoB++ dependencies"
 	@echo "  install-demo     - Install demo dependencies"
 	@echo "  demo             - Run demo agent"
@@ -47,4 +84,4 @@ help:
 	@echo "  clean-miniwob    - Remove MiniWoB++ directory"
 	@echo "  help             - Show this help message"
 
-.PHONY: install setup-miniwob install-demo demo test-core clean-miniwob help
+.PHONY: sync sync-all browsers lint fmt test install setup-miniwob install-demo demo test-core clean-miniwob help

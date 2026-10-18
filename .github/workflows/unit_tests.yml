@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - side/main
   pull_request:
   workflow_dispatch:
 
@@ -19,19 +20,45 @@ jobs:
     steps:
 
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10
         with:
           python-version: '3.12'
-          cache: 'pip' # caching pip dependencies
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
-      - name: Pip install
-        run: pip install black[jupyter]==24.2.0 blacken-docs
+      - name: Install lint tools
+        run: uv sync --locked --only-group lint
 
       - name: Code Formatting
-        run: black . --check
+        run: uv run --no-sync black . --check
+
+  ruff:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash -l {0}
+
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install lint tools
+        run: uv sync --locked --only-group lint
+
+      - name: Ruff
+        run: uv run --no-sync ruff check --output-format=github .
 
   agentlab:
     runs-on: ubuntu-22.04
@@ -43,17 +70,17 @@ jobs:
     steps:
 
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Checkout AgentLab
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: 'ServiceNow/AgentLab'
           ref: 'main'
           path: 'agentlab'
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '<3.13'
           cache: 'pip' # caching pip dependencies
@@ -69,7 +96,7 @@ jobs:
         run: pip list
 
       - name: Fetch MiniWob
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: "Farama-Foundation/miniwob-plusplus"
           ref: "7fd85d71a4b60325c6585396ec4f48377d049838"
@@ -90,7 +117,13 @@ jobs:
         # run: pytest -n 5 --durations=10 -m 'not pricy' -v agentlab/tests/experiments/test_launch_exp.py
 
   browsergym-core:
+    name: browsergym-core (py${{ matrix.python-version }})
     runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
 
     defaults:
       run:
@@ -99,26 +132,32 @@ jobs:
     steps:
 
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10
         with:
-          python-version: '3.12'
-          cache: 'pip' # caching pip dependencies
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
-      - name: Pip install
-        working-directory: ./dev
-        run: pip install -r requirements.txt
+      - name: uv sync
+        run: uv sync --locked
 
       - name: Pip list
-        run: pip list
+        run: uv pip list
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('uv.lock') }}
 
       - name: Install Playwright
-        run: playwright install chromium --with-deps
+        run: uv run --no-sync playwright install chromium --with-deps
 
       - name: Run browsergym-core Unit Tests
-        run: pytest -n 5 --durations=10 -m 'not pricy' -v tests/core
+        run: uv run --no-sync pytest -n 5 --durations=10 -m 'not pricy' -v tests/core
 
   browsergym-miniwob:
     runs-on: ubuntu-22.04
@@ -130,10 +169,10 @@ jobs:
     steps:
 
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: 'pip' # caching pip dependencies
@@ -149,7 +188,7 @@ jobs:
         run: playwright install chromium --with-deps
 
       - name: Fetch MiniWob
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: "Farama-Foundation/miniwob-plusplus"
           ref: "7fd85d71a4b60325c6585396ec4f48377d049838"
@@ -176,10 +215,10 @@ jobs:
     steps:
 
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: 'pip' # caching pip dependencies
@@ -195,7 +234,7 @@ jobs:
         run: playwright install chromium --with-deps
 
       - name: Fetch MiniWob
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: "Farama-Foundation/miniwob-plusplus"
           ref: "7fd85d71a4b60325c6585396ec4f48377d049838"
@@ -223,10 +262,10 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: 'pip' # caching pip dependencies
@@ -264,10 +303,10 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: 'pip' # caching pip dependencies
@@ -304,10 +343,10 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: 'pip' # caching pip dependencies
@@ -345,10 +384,10 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: 'pip' # caching pip dependencies
@@ -385,10 +424,10 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: 'pip' # caching pip dependencies

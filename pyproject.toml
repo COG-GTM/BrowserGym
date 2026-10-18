@@ -4,6 +4,61 @@ description = "BrowserGym: a gym environment for web task automation in the Chro
 dynamic = ["version"]
 [tool.setuptools]
 packages = []  # meta distribution, packages are included as dependencies
+
+# --- uv workspace -----------------------------------------------------------
+# `uv sync` installs browsergym-core + the dev tools (enough for `make test-core`).
+# `uv sync --all-packages` installs every browsergym/* member (pulls torch via visualwebarena).
+[tool.uv.workspace]
+members = [
+    "browsergym",
+    "browsergym/core",
+    "browsergym/miniwob",
+    "browsergym/webarena",
+    "browsergym/webarenalite",
+    "browsergym/visualwebarena",
+    "browsergym/assistantbench",
+]
+# browsergym-experiments is wired in as an editable path source (not a member) because its
+# `all` extra references the misspelled `browsergym-experiment[...]`, which uv cannot lock.
+
+[tool.uv.sources]
+browsergym = { workspace = true }
+browsergym-core = { workspace = true }
+browsergym-miniwob = { workspace = true }
+browsergym-webarena = { workspace = true }
+browsergym-webarenalite = { workspace = true }
+browsergym-visualwebarena = { workspace = true }
+browsergym-experiments = { path = "browsergym/experiments", editable = true }
+browsergym-assistantbench = { workspace = true }
+
+[tool.uv]
+# playwright==1.44 (browsergym-core) pins greenlet==3.0.3, which has no Python 3.13 wheel and
+# fails to build from source there; greenlet>=3.1.1 keeps the same API and ships 3.13 wheels.
+override-dependencies = [
+    "greenlet==3.0.3; python_version < '3.13'",
+    "greenlet>=3.1.1; python_version >= '3.13'",
+]
+
+[dependency-groups]
+lint = [
+    "ruff==0.17.1",
+    "black[jupyter]==24.2.0",
+    "blacken-docs",
+    "pre-commit",
+]
+test = [
+    "browsergym-core",
+    "pytest>=7.3.2",
+    "pytest-xdist",
+    "pytest-playwright",
+    "tenacity",
+    "regex",
+]
+dev = [
+    { include-group = "lint" },
+    { include-group = "test" },
+]
+
 [tool.black]
 line-length = 100
 include = '\.pyi?$'
@@ -31,3 +86,70 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "serial: mark test to be run sequantially (deselect with '-m \"not serial\"')"
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["docs/src/generated"]
+
+[tool.ruff.lint]
+# pyflakes + pycodestyle errors (ruff defaults) + isort. Formatting stays with black.
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["browsergym", "bgym"]
+
+[tool.ruff.lint.per-file-ignores]
+# Package __init__ files re-export their public API.
+"__init__.py" = ["F401"]
+# Baseline: pre-existing violations at the time ruff was adopted. Fix a file, then drop its entry.
+"browsergym/assistantbench/src/browsergym/assistantbench/__init__.py" = ["F541"]
+"browsergym/assistantbench/src/browsergym/assistantbench/evaluation/evaluate_utils/evaluate_dicts.py" = ["E721", "E722"]
+"browsergym/assistantbench/src/browsergym/assistantbench/evaluation/evaluate_utils/evaluate_numbers.py" = ["E721"]
+"browsergym/assistantbench/src/browsergym/assistantbench/evaluation/evaluate_utils/evaluate_strings.py" = ["E721"]
+"browsergym/assistantbench/src/browsergym/assistantbench/evaluation/evaluator.py" = ["E721", "E722"]
+"browsergym/core/src/browsergym/core/__init__.py" = ["E402"]
+"browsergym/core/src/browsergym/core/action/highlevel.py" = ["F541"]
+"browsergym/core/src/browsergym/core/action/parsers.py" = ["I001"]
+"browsergym/core/src/browsergym/core/action/python.py" = ["F541"]
+"browsergym/core/src/browsergym/core/chat.py" = ["I001"]
+"browsergym/core/src/browsergym/core/spaces.py" = ["F541"]
+"browsergym/core/src/browsergym/utils/obs.py" = ["E713", "F541"]
+"browsergym/experiments/src/browsergym/experiments/benchmark/base.py" = ["F541"]
+"browsergym/experiments/src/browsergym/experiments/benchmark/configs.py" = ["I001"]
+"browsergym/experiments/src/browsergym/experiments/benchmark/metadata/scripts.py" = ["E712"]
+"browsergym/experiments/src/browsergym/experiments/benchmark/utils.py" = ["E722", "F541", "I001"]
+"browsergym/experiments/src/browsergym/experiments/loop.py" = ["F401", "F541", "I001"]
+"browsergym/miniwob/src/browsergym/miniwob/base.py" = ["F541", "I001"]
+"browsergym/visualwebarena/src/browsergym/visualwebarena/__init__.py" = ["E722"]
+"browsergym/visualwebarena/src/browsergym/visualwebarena/instance.py" = ["E731"]
+"browsergym/visualwebarena/src/browsergym/visualwebarena/task.py" = ["E713"]
+"browsergym/visualwebarena/src/browsergym/visualwebarena/utils.py" = ["I001"]
+"browsergym/webarena/src/browsergym/webarena/__init__.py" = ["E722"]
+"browsergym/webarena/src/browsergym/webarena/instance.py" = ["E731", "F541"]
+"browsergym/webarena/src/browsergym/webarena/task.py" = ["E713", "F401"]
+"browsergym/webarenalite/src/browsergym/webarenalite/__init__.py" = ["E722"]
+"browsergym/webarenalite/src/browsergym/webarenalite/evaluators.py" = ["F401", "I001"]
+"browsergym/webarenalite/src/browsergym/webarenalite/helper_functions.py" = ["F401", "I001"]
+"browsergym/webarenalite/src/browsergym/webarenalite/task.py" = ["I001"]
+"demo_agent/agent.py" = ["F401", "F541"]
+"tests/assistantbench/test_env_general.py" = ["E402", "F401"]
+"tests/core/test_actions_highlevel.py" = ["E712", "F401", "F541", "F841"]
+"tests/core/test_actions_python.py" = ["I001"]
+"tests/core/test_gym_envs.py" = ["E712", "F541"]
+"tests/core/test_observation.py" = ["F401", "F541"]
+"tests/core/test_registration.py" = ["E712"]
+"tests/core/test_task.py" = ["F401"]
+"tests/experiments/test_bgym.py" = ["I001"]
+"tests/experiments/test_exp_loop.py" = ["I001"]
+"tests/miniwob/test_base.py" = ["E712", "F541", "I001"]
+"tests/miniwob/test_click-menu-2.py" = ["E712", "F401", "F541", "I001"]
+"tests/miniwob/test_click-scroll-list.py" = ["E712", "F401", "I001"]
+"tests/miniwob/test_use-colorwheel-2.py" = ["E712", "F401", "I001"]
+"tests/utils.py" = ["I001"]
+"tests/visualwebarena/test_vwa_domains.py" = ["I001"]
+"tests/visualwebarena/test_vwa_tasks_with_reset.py" = ["E402", "F401"]
+"tests/visualwebarena/test_vwa_tasks_without_reset.py" = ["E402", "F401", "F541"]
+"tests/webarena/test_env_general.py" = ["E402", "F401", "I001"]
+"tests/webarena/test_infeasible.py" = ["E712", "F401", "I001"]
+"tests/webarena/test_instance.py" = ["I001"]
