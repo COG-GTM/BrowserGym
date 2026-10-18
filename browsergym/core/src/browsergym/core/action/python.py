@@ -1,6 +1,18 @@
+import ast
 import re
+import warnings
 
 from .base import AbstractActionSet
+
+
+def _is_valid_python(code: str) -> bool:
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            ast.parse(code)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return False
+    return True
 
 
 class PythonActionSet(AbstractActionSet):
@@ -99,6 +111,10 @@ frame.get_by_test_id("ba3").click()
         """
 
         python_code = ""
+
+        # valid Python is executed as is, even if it quotes markdown fences in string literals
+        if _is_valid_python(action):
+            return action
 
         # extract markdown-style code snippets if detected
         pattern = re.compile(r"```(?:python)?\n(?P<code>[\s\S]*?)```")

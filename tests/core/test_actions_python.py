@@ -109,6 +109,22 @@ a = 0
 b = 3
 """,
     ),
+    (
+        """\
+send_message_to_user('''Example:
+```python
+page.get_by_role("button", name="Delete").click()
+```
+''')
+""",
+        """\
+send_message_to_user('''Example:
+```python
+page.get_by_role("button", name="Delete").click()
+```
+''')
+""",
+    ),
 ]
 
 
