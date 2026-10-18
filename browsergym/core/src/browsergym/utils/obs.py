@@ -63,7 +63,7 @@ def flatten_dom_to_str(
             if parent_idx != -1:
                 node_children[parent_idx].append(node_idx)
 
-        def dfs(node_idx: int, parent_node_skipped: bool) -> str:
+        def dfs(node_idx: int, parent_node_skipped: bool, parts: list) -> None:
 
             # https://developer.mozilla.org/en-US/docs/Web/API/Node/nodeType
             # https://developer.mozilla.org/en-US/docs/Web/API/Node/nodeName
@@ -153,25 +153,25 @@ def flatten_dom_to_str(
                     # print node closing tag
                     html_after += f"</{tag_name}>"
 
-            html = ""
-            html += html_before
+            parts.append(html_before)
 
             # recursively print iframe nodes if any
             if node_idx in nodes["contentDocumentIndex"]["index"]:
                 sub_document_idx = nodes["contentDocumentIndex"]["value"][
                     nodes["contentDocumentIndex"]["index"].index(node_idx)
                 ]
-                html += parse_document(document_idx=sub_document_idx)
+                parts.append(parse_document(document_idx=sub_document_idx))
 
             # recursively print children nodes if any
             for child_idx in node_children[node_idx]:
-                html += dfs(node_idx=child_idx, parent_node_skipped=skip_node)
+                dfs(node_idx=child_idx, parent_node_skipped=skip_node, parts=parts)
 
-            html += html_after
+            parts.append(html_after)
 
-            return html
-
-        html = dfs(node_idx=0, parent_node_skipped=False)
+        # collect fragments in one list and join once, to avoid re-copying subtrees at every level
+        parts = []
+        dfs(node_idx=0, parent_node_skipped=False, parts=parts)
+        html = "".join(parts)
 
         # Format the HTML document with indentation
         soup = BeautifulSoup(html, "lxml")
@@ -303,8 +303,13 @@ def flatten_axtree_to_str(
     for idx, node in enumerate(AX_tree["nodes"]):
         node_id_to_idx[node["nodeId"]] = idx
 
-    def dfs(node_idx: int, depth: int, parent_node_filtered: bool, parent_node_name: str) -> str:
-        tree_str = ""
+    def dfs(
+        node_idx: int,
+        depth: int,
+        parent_node_filtered: bool,
+        parent_node_name: str,
+        lines: list,
+    ) -> None:
         node = AX_tree["nodes"][node_idx]
         indent = "\t" * depth
         skip_node = False  # node will not be printed, with no effect on children nodes
@@ -402,27 +407,25 @@ def flatten_axtree_to_str(
                 if attributes:
                     node_str += ", ".join([""] + attributes)
 
-                tree_str += f"{indent}{node_str}"
+                lines.append(f"{indent}{node_str}")
 
         for child_node_id in node["childIds"]:
             if child_node_id not in node_id_to_idx or child_node_id == node["nodeId"]:
                 continue
             # mark this to save some tokens
             child_depth = depth if skip_node else (depth + 1)
-            child_str = dfs(
+            dfs(
                 node_id_to_idx[child_node_id],
                 child_depth,
                 parent_node_filtered=filter_node,
                 parent_node_name=node_name,
+                lines=lines,
             )
-            if child_str:
-                if tree_str:
-                    tree_str += "\n"
-                tree_str += child_str
 
-        return tree_str
-
-    tree_str = dfs(0, 0, False, "")
+    # collect node lines in one list and join once, to avoid re-copying subtrees at every level
+    lines = []
+    dfs(0, 0, False, "", lines)
+    tree_str = "\n".join(lines)
     return tree_str
 
 
