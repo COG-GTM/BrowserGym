@@ -153,6 +153,16 @@ class WebArenaInstance:
                     f'WebArena site "{site}" ({url}) is not reacheable. Please check the URL.'
                 )
 
+    @staticmethod
+    def _submit_login(page: playwright.sync_api.Page, submit: playwright.sync_api.Locator):
+        """
+        Click a login form's submit button and wait until the resulting navigation has loaded, so
+        that the session cookie is set before the login page is closed.
+        """
+        with page.expect_navigation():
+            submit.click()
+        page.wait_for_load_state()
+
     def ui_login(self, site: str, page: playwright.sync_api.Page):
         """
         Should only be called once per site (expects user to be logged out).
@@ -163,52 +173,54 @@ class WebArenaInstance:
         # open a new page (tab) to perform the login
         page = page.context.new_page()
 
-        match site:
-            case "reddit":
-                username = self.credentials[site]["username"]
-                password = self.credentials[site]["password"]
+        try:
+            match site:
+                case "reddit":
+                    username = self.credentials[site]["username"]
+                    password = self.credentials[site]["password"]
 
-                page.goto(f"{url}")
-                page.get_by_role("link", name="Log in").click()
-                page.get_by_label("Username").fill(username)
-                page.get_by_label("Password").fill(password)
-                page.get_by_role("button", name="Log in").click()
+                    page.goto(f"{url}")
+                    page.get_by_role("link", name="Log in").click()
+                    page.get_by_label("Username").fill(username)
+                    page.get_by_label("Password").fill(password)
+                    self._submit_login(page, page.get_by_role("button", name="Log in"))
 
-            case "gitlab":
-                username = self.credentials[site]["username"]
-                password = self.credentials[site]["password"]
+                case "gitlab":
+                    username = self.credentials[site]["username"]
+                    password = self.credentials[site]["password"]
 
-                page.goto(f"{url}/users/sign_in")
-                page.get_by_label("Username or email").fill(username)
-                page.get_by_label("Password").fill(password)
-                page.get_by_role("button", name="Sign in").click()
+                    page.goto(f"{url}/users/sign_in")
+                    page.get_by_label("Username or email").fill(username)
+                    page.get_by_label("Password").fill(password)
+                    self._submit_login(page, page.get_by_role("button", name="Sign in"))
 
-            case "shopping":
-                username = self.credentials[site]["username"]
-                password = self.credentials[site]["password"]
+                case "shopping":
+                    username = self.credentials[site]["username"]
+                    password = self.credentials[site]["password"]
 
-                page.goto(f"{url}/customer/account/login/")
-                page.get_by_label("Email", exact=True).fill(username)
-                page.get_by_label("Password", exact=True).fill(password)
-                page.get_by_role("button", name="Sign In").click()
+                    page.goto(f"{url}/customer/account/login/")
+                    page.get_by_label("Email", exact=True).fill(username)
+                    page.get_by_label("Password", exact=True).fill(password)
+                    self._submit_login(page, page.get_by_role("button", name="Sign In"))
 
-            case "shopping_admin":
-                username = self.credentials[site]["username"]
-                password = self.credentials[site]["password"]
+                case "shopping_admin":
+                    username = self.credentials[site]["username"]
+                    password = self.credentials[site]["password"]
 
-                page.goto(url)
-                page.get_by_label("Username").fill(username)
-                page.get_by_label("Password").fill(password)
-                page.get_by_role("button", name="Sign in").click()
+                    page.goto(url)
+                    page.get_by_label("Username").fill(username)
+                    page.get_by_label("Password").fill(password)
+                    self._submit_login(page, page.get_by_role("button", name="Sign in"))
 
-            case "wikipedia":
-                page.goto(url)
+                case "wikipedia":
+                    page.goto(url)
 
-            case "map":
-                page.goto(url)
+                case "map":
+                    page.goto(url)
 
-            case _:
-                raise ValueError
+                case _:
+                    raise ValueError
 
-        # release login page
-        page.close()
+        finally:
+            # release login page, even if the login failed
+            page.close()
