@@ -1,2 +1,5 @@
-browsergym
-openai
+browsergym>=0.14
+openai>=1.40
+anthropic>=0.40
+# imported by browsergym-experiments but not declared in its requirements
+tqdm
