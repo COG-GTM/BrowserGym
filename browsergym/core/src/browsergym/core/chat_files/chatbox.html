@@ -225,9 +225,9 @@
 
         async function send_msg(msg) {
             if (msg.trim()) {
+                inputBox.value = '';
                 const strings = await send_user_message(msg);
                 addChatMessage(strings[0], strings[1], strings[2]);
-                inputBox.value = '';
             }
         }
 

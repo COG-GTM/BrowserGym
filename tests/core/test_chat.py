@@ -6,7 +6,13 @@ from browsergym.core.chat import Chat
 
 __HEADLESS = False if "DISPLAY_BROWSER" in os.environ else True
 
-TRICKY_MSG = "it's \"quoted\" \\ back`slash` ${x}\nline two </script> é 漢字 😀 \u2028 \U000e0041"
+TRICKY_MSG = 'it\'s "quoted" \\ back`slash` ${x}\nline two </script> é 漢字 😀 \u2028 \U000e0041'
+
+TYPE_AND_SUBMIT_JS = """setTimeout(() => {
+    const box = document.getElementById('inputBox');
+    box.value = 'typed by the user';
+    box.dispatchEvent(new KeyboardEvent('keypress', {key: 'Enter'}));
+}, 200);"""
 
 
 @pytest.fixture(params=[True, False], ids=["modern", "classic"])
@@ -78,13 +84,7 @@ def test_user_message_from_chatbox(chat):
 
 def test_wait_for_user_message(chat, modern):
     chat.page.evaluate("USER_MESSAGE_RECEIVED = true;")
-    chat.page.evaluate(
-        """setTimeout(() => {
-            const box = document.getElementById('inputBox');
-            box.value = 'typed by the user';
-            box.dispatchEvent(new KeyboardEvent('keypress', {key: 'Enter'}));
-        }, 200);"""
-    )
+    chat.page.evaluate(TYPE_AND_SUBMIT_JS)
     chat.wait_for_user_message()
 
     assert chat.page.evaluate("USER_MESSAGE_RECEIVED") is True
