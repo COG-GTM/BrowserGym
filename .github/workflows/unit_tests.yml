@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.3.0  # immutable releases only, no moving major tag
         with:
           python-version: '3.12'
           enable-cache: true
@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.3.0  # immutable releases only, no moving major tag
         with:
           python-version: '3.12'
           enable-cache: true
@@ -135,7 +135,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.3.0  # immutable releases only, no moving major tag
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
