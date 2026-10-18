@@ -22,12 +22,12 @@ def evaluate_numbers(pred: Union[float, str], gold: float):
     if type(pred) != float and type(pred) != int:
         try:
             pred = float(pred)
-        except ValueError:
+        except (TypeError, ValueError):
             res = 0
     if type(gold) != float and type(gold) != int:
         try:
             gold = float(gold)
-        except ValueError:
+        except (TypeError, ValueError):
             res = 0
     if res is None:
         res = distance_function_log(pred, gold)
