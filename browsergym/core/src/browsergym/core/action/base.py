@@ -77,10 +77,12 @@ def _compile_python_includes(includes: str):
 def _split_python_includes(code: str) -> tuple[Optional[str], str]:
     with _registered_python_includes_lock:
         candidates = list(_registered_python_includes)
-    for includes in reversed(candidates):
-        if code.startswith(includes):
-            return includes, code[len(includes) :]
-    return None, code
+    # pick the longest match, action sets with more actions extend the includes of smaller ones
+    matches = [includes for includes in candidates if code.startswith(includes)]
+    if not matches:
+        return None, code
+    includes = max(matches, key=len)
+    return includes, code[len(includes) :]
 
 
 def execute_python_code(

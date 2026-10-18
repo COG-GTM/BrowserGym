@@ -1425,3 +1425,18 @@ def test_python_includes_unregistered_code_unchanged():
     code = action_set.to_python_code("noop()")
     with pytest.raises(ZeroDivisionError):
         base.execute_python_code(code + "1 / 0\n", _RecordingPage(), messages.append, None)
+
+
+def test_python_includes_longest_prefix_wins():
+    from browsergym.core.action import base
+
+    large_set = HighLevelActionSet(subsets=["bid", "nav"], demo_mode="off")
+    small_set = HighLevelActionSet(subsets=["bid"], demo_mode="off")
+    assert large_set.python_includes.startswith(small_set.python_includes)
+
+    large_code = large_set.to_python_code("noop(5)")
+    small_set.to_python_code("noop()")  # registered after the larger set
+
+    includes, rest = base._split_python_includes(large_code)
+    assert includes == large_set.python_includes
+    assert rest == "noop(5)\n"
