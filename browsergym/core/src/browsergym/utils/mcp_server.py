@@ -165,28 +165,31 @@ def fn_wrapper(func: Callable, validate: bool = True):
 
         fn = getattr(fn_context, func.__name__)
 
-        gym.last_action = format_func_call(fn, args, kwargs)
-        info, send_message_to_user, report_infeasible_instructions = await _run_in_gym_thread(
-            gym.pre_step
-        )
+        def step():
+            gym.last_action = format_func_call(fn, args, kwargs)
+            info, send_message_to_user, report_infeasible_instructions = gym.pre_step()
 
-        # Set up the module vars from the current state of the gym
-        fn_context.send_message_to_user = send_message_to_user
-        fn_context.report_infeasible_instructions = report_infeasible_instructions
-        fn_context.page = gym.page
-        fn_context.demo_mode = config.demo_mode
+            # Set up the module vars from the current state of the gym
+            fn_context.send_message_to_user = send_message_to_user
+            fn_context.report_infeasible_instructions = report_infeasible_instructions
+            fn_context.page = gym.page
+            fn_context.demo_mode = config.demo_mode
 
-        try:
-            await _run_in_gym_thread(fn, *args, **kwargs)
-            gym.last_action_error = ""
-        except Exception as e:
-            gym.last_action_error = f"{type(e).__name__}: {e}"
-            match = re.match("TimeoutError: Timeout ([0-9]+)ms exceeded.", gym.last_action_error)
-            if match:
-                info["action_exec_timeout"] = float(match.groups()[0]) / 1000
+            try:
+                fn(*args, **kwargs)
+                gym.last_action_error = ""
+            except Exception as e:
+                gym.last_action_error = f"{type(e).__name__}: {e}"
+                match = re.match(
+                    "TimeoutError: Timeout ([0-9]+)ms exceeded.", gym.last_action_error
+                )
+                if match:
+                    info["action_exec_timeout"] = float(match.groups()[0]) / 1000
 
-        results = await _run_in_gym_thread(gym.post_step, info, validate)
-        return results
+            return gym.post_step(info, validate)
+
+        # one worker job per step: no interleaving, and a cancelled call still completes the step
+        return await asyncio.shield(_run_in_gym_thread(step))
 
     decorator.__wrapped__ = func  # type: ignore
     decorator.__name__ = func.__name__
