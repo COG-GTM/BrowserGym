@@ -330,6 +330,29 @@ def test_save_tape_failed_write_leaves_no_file(tmp_path, monkeypatch):
     assert set(os.listdir(exp_dir)) == files_before | {"tape.json"}
 
 
+def test_save_tape_nested_filename(tmp_path):
+    exp_dir = _make_exp_dir(tmp_path)
+    (exp_dir / "exports").mkdir()
+
+    ExpResult(exp_dir).save_tape("exports/tape.json")
+
+    assert os.listdir(exp_dir / "exports") == ["tape.json"]
+    with open(exp_dir / "exports" / "tape.json") as f:
+        assert len(json.load(f)["steps"]) == 8
+
+
+@pytest.mark.parametrize("umask", [0o077, 0o002])
+def test_save_tape_respects_umask(tmp_path, umask):
+    exp_dir = _make_exp_dir(tmp_path)
+    old_umask = os.umask(umask)
+    try:
+        ExpResult(exp_dir).save_tape()
+    finally:
+        os.umask(old_umask)
+
+    assert os.stat(exp_dir / "tape.json").st_mode & 0o777 == 0o666 & ~umask
+
+
 # --- summary / status ---
 
 

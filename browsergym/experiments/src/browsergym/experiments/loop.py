@@ -7,7 +7,6 @@ import os
 import pickle
 import re
 import sys
-import tempfile
 import time
 import traceback
 import uuid
@@ -771,11 +770,14 @@ class ExpResult:
         tape_json = json.dumps(self.tape, indent=4, ensure_ascii=False, cls=DataclassJSONEncoder)
         # write to a temp file and link it into place, so a failed write never leaves a
         # partial tape behind and an existing tape is never overwritten
-        fd, tmp_path = tempfile.mkstemp(dir=self.exp_dir, prefix=f".{filename}.", suffix=".tmp")
+        dest = self.exp_dir / filename
+        tmp_path = dest.parent / f".{dest.name}.{uuid.uuid4().hex}.tmp"
+        # os.open with 0o666 keeps the umask-derived permissions a plain open() would give
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
         try:
             with os.fdopen(fd, "w") as f:
                 f.write(tape_json)
-            os.link(tmp_path, self.exp_dir / filename)
+            os.link(tmp_path, dest)
         finally:
             os.unlink(tmp_path)
 
