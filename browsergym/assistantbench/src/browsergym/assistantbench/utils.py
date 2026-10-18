@@ -45,9 +45,10 @@ def _file_lock(lock_file_path: pathlib.Path):
 
     The kernel drops the lock when the holder closes the file or dies, so a crash or an
     exception can never leave a stale lock behind. The lock file itself is intentionally
-    never deleted: unlinking it would let two processes lock two different inodes.
+    never deleted: unlinking it would let two processes lock two different inodes. It is opened
+    read-only, so any user who can read it can take the lock (flock needs no write access).
     """
-    fd = os.open(lock_file_path, os.O_RDWR | os.O_CREAT, 0o666)
+    fd = os.open(lock_file_path, os.O_RDONLY | os.O_CREAT, 0o666)
     try:
         start_time = time.time()
         logged_wait = False

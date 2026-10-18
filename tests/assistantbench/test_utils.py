@@ -76,6 +76,15 @@ def test_leftover_legacy_lock_file_does_not_block(output_file):
     assert _read(output_file) == [{"id": "t1", "answer": "x"}]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+def test_read_only_lock_file_can_be_locked(output_file):
+    lock = _lock_path(output_file)
+    lock.write_text("")
+    os.chmod(lock, 0o444)
+    add_prediction_to_jsonl(str(output_file), "t1", "x", override_if_exists=False)
+    assert _read(output_file) == [{"id": "t1", "answer": "x"}]
+
+
 def test_lock_held_by_live_process_is_respected(output_file, monkeypatch):
     monkeypatch.setattr(utils, "LOCK_MAX_WAIT", 0.5)
     script = textwrap.dedent(
