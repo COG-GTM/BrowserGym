@@ -357,7 +357,7 @@ class DemoAgentArgs(AbstractAgentArgs):
     internal states of the agent.
     """
 
-    model_name: str = DEFAULT_MODELS["openai"]
+    model_name: str | None = None  # None -> DEFAULT_MODELS[provider]
     provider: str = "openai"
     max_retries: int = 4
     chat_mode: bool = False
@@ -365,6 +365,9 @@ class DemoAgentArgs(AbstractAgentArgs):
     use_html: bool = False
     use_axtree: bool = True
     use_screenshot: bool = False
+
+    def __post_init__(self):
+        self.model_name = self.model_name or DEFAULT_MODELS[self.provider]
 
     def make_agent(self):
         return DemoAgent(

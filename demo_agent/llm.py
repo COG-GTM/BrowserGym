@@ -321,10 +321,12 @@ class MockLLMClient(LLMClient):
         else:
             title = _active_tab_field(prompt, "Title") or "unknown"
             url = _active_tab_field(prompt, "URL") or "unknown"
-            n_bids = len(set(re.findall(r"\[(\d+)\]", prompt)))
+            # AXTree lines look like "[12] button", pruned HTML like '<button bid="12">'
+            bids = re.findall(r"\[(\d+)\]|\bbid=\"(\d+)\"", prompt)
+            n_bids = len({a or b for a, b in bids})
             summary = (
                 f"Dry run complete. Active tab: {title!r} ({url}), "
-                f"{n_bids} elements with a bid in the accessibility tree."
+                f"{n_bids} elements with a bid in the observation."
             )
             text = f"I report what I saw to the user.\n```send_msg_to_user({summary!r})```"
         return text, Usage(_approx_tokens(system) + _approx_tokens(user), len(text) // 4)

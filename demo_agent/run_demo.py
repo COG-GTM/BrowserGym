@@ -200,7 +200,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    exp_args = ExpArgs(env_args=env_args, agent_args=agent_args)
+    level = logging.getLevelName(args.log_level)
+    exp_args = ExpArgs(
+        env_args=env_args,
+        agent_args=agent_args,
+        logging_level=level,
+        logging_level_stdout=level,
+    )
     exp_args.prepare(args.results_dir)
     exp_args.run()
 
