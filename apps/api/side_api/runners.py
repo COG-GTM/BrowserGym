@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import shlex
+import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Protocol
 
@@ -141,3 +144,34 @@ def pid_alive(pid: int | None) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _cmdline(pid: int) -> str | None:
+    try:
+        return (
+            Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+        )
+    except OSError:
+        return None
+
+
+def terminate_pid(pid: int, run_id: str, timeout: float = 5.0) -> None:
+    """Stop a runner started by a previous API process. Guards against PID reuse by requiring
+    the run id on the process command line (where /proc is available)."""
+    if not pid_alive(pid):
+        return
+    cmdline = _cmdline(pid)
+    if cmdline is not None and run_id not in cmdline:
+        log.warning("pid %s no longer belongs to run %s; not signalling it", pid, run_id)
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+        deadline = time.monotonic() + timeout
+        while pid_alive(pid) and time.monotonic() < deadline:
+            with contextlib.suppress(ChildProcessError):
+                os.waitpid(pid, os.WNOHANG)
+            time.sleep(0.05)
+        if pid_alive(pid):
+            os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass

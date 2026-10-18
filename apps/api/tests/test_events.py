@@ -117,3 +117,10 @@ def test_get_run_is_terminal_as_soon_as_sse_closes(make_api, settings):
     _stream(api, run["id"])
     done = api.get(f"/runs/{run['id']}").json()
     assert done["status"] == "succeeded" and done["n_steps"] == 4 and done["reward"] == 1.0
+
+
+def test_sse_reconnect_after_terminal_event_closes_without_duplicate(api):
+    run = api.create_run()
+    full = _stream(api, run["id"])
+    resumed = _stream(api, run["id"], headers={"Last-Event-ID": full[-1]["id"]})
+    assert resumed == []

@@ -36,6 +36,14 @@ def normalize_event(raw: dict, run_id: str, paths: RunPaths) -> dict | None:
     return event.to_json_dict()
 
 
+def _is_terminal(raw: object) -> bool:
+    return (
+        isinstance(raw, dict)
+        and raw.get("type") == "status"
+        and raw.get("status") in TERMINAL_STATUSES
+    )
+
+
 async def event_stream(
     request: Request,
     paths: RunPaths,
@@ -68,11 +76,13 @@ async def event_stream(
                 if not line.strip():
                     continue
                 line_no += 1
-                if line_no <= last_event_id:
-                    continue
                 try:
                     raw = json.loads(line)
                 except ValueError:
+                    continue
+                if line_no <= last_event_id:
+                    if _is_terminal(raw):
+                        return  # client already has the terminal status
                     continue
                 event = normalize_event(raw, run_id, paths)
                 if event is None:

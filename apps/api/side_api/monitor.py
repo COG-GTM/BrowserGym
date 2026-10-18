@@ -14,7 +14,7 @@ from sqlmodel import select
 from .config import Settings
 from .db import RunRecord, session
 from .notify import Notifier
-from .runners import RunHandle, pid_alive, spawn
+from .runners import RunHandle, pid_alive, spawn, terminate_pid
 from .schemas import TERMINAL_STATUSES, RunEvent
 from .storage import RunPaths, append_jsonl, now_iso, read_json, write_json_atomic
 
@@ -44,7 +44,8 @@ class RunManager:
                 select(RunRecord.id).where(RunRecord.status.in_(["queued", "running"]))  # type: ignore[attr-defined]
             ).all()
         for run_id in ids:
-            self._start_monitor(run_id)
+            # Statuses already in the log were forwarded by the previous API process.
+            self._start_monitor(run_id, notify_after=_count_lines(self.paths(run_id).events))
 
     async def shutdown(self) -> None:
         for task in list(self.monitors.values()):
@@ -91,6 +92,8 @@ class RunManager:
         if rec.status == "queued" or not alive:
             if handle:
                 handle.terminate()
+            elif rec.pid and alive:
+                terminate_pid(rec.pid, run_id)
             return self.finalize(run_id, "cancelled")
         return rec
 
@@ -99,6 +102,12 @@ class RunManager:
         if handle and handle.is_alive():
             self.paths(run_id).cancel.touch()
             await asyncio.to_thread(handle.terminate)
+        elif handle is None:
+            # Runner may have been started by a previous API process (no in-memory handle).
+            with session(self.engine) as s:
+                rec = s.get(RunRecord, run_id)
+            if rec and rec.pid and rec.status not in TERMINAL_STATUSES:
+                await asyncio.to_thread(terminate_pid, rec.pid, run_id)
         task = self.monitors.pop(run_id, None)
         if task:
             task.cancel()
@@ -144,29 +153,31 @@ class RunManager:
             self._sync_from_run_json(run_id)
 
     # -- monitoring -------------------------------------------------------
-    def _start_monitor(self, run_id: str) -> None:
+    def _start_monitor(self, run_id: str, notify_after: int = 0) -> None:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             if self.loop is None:
                 raise
-            self.loop.call_soon_threadsafe(self._start_monitor, run_id)
+            self.loop.call_soon_threadsafe(self._start_monitor, run_id, notify_after)
             return
         if run_id not in self.monitors or self.monitors[run_id].done():
             self.monitors[run_id] = asyncio.create_task(
-                self._monitor(run_id), name=f"monitor-{run_id}"
+                self._monitor(run_id, notify_after), name=f"monitor-{run_id}"
             )
 
-    async def _monitor(self, run_id: str) -> None:
+    async def _monitor(self, run_id: str, notify_after: int = 0) -> None:
         paths = self.paths(run_id)
         offset = 0
         buf = b""
+        seen = 0
         try:
             while True:
                 new_lines, offset, buf = _read_new_lines(paths.events, offset, buf)
                 terminal = False
                 for line in new_lines:
-                    terminal |= self._handle_event(run_id, line)
+                    seen += 1
+                    terminal |= self._handle_event(run_id, line, notify=seen > notify_after)
                 if terminal:
                     await asyncio.sleep(1.0)
                     self._sync_from_run_json(run_id, keep_status=True)
@@ -184,7 +195,7 @@ class RunManager:
             if self.monitors.get(run_id) is asyncio.current_task():
                 self.monitors.pop(run_id, None)
 
-    def _handle_event(self, run_id: str, line: bytes) -> bool:
+    def _handle_event(self, run_id: str, line: bytes, notify: bool = True) -> bool:
         try:
             event = RunEvent.model_validate(json.loads(line))
         except ValueError:
@@ -201,7 +212,8 @@ class RunManager:
         if event.type != "status" or event.status is None:
             return False
         self._sync_from_run_json(run_id, status=event.status)
-        self.notifier.submit(event.to_json_dict())
+        if notify:
+            self.notifier.submit(event.to_json_dict())
         return event.status in TERMINAL_STATUSES
 
     def _sync_from_run_json(
@@ -258,6 +270,9 @@ class RunManager:
         elif not pid_alive(rec.pid):
             if _has_unread_terminal(self.paths(run_id).events):
                 return
+            if requested:
+                self.finalize(run_id, "cancelled")
+                return
             self.finalize(
                 run_id, "failed", error="runner process is no longer running (API restarted?)"
             )
@@ -275,6 +290,13 @@ def _read_new_lines(path, offset: int, buf: bytes) -> tuple[list[bytes], int, by
     data = buf + chunk
     *complete, rest = data.split(b"\n")
     return [ln for ln in complete if ln.strip()], offset + len(chunk), rest
+
+
+def _count_lines(path) -> int:
+    try:
+        return sum(1 for ln in path.read_bytes().split(b"\n") if ln.strip())
+    except FileNotFoundError:
+        return 0
 
 
 def _has_unread_terminal(path) -> bool:

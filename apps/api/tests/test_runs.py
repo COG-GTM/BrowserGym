@@ -280,3 +280,10 @@ def test_data_dir_layout(api, settings):
         f"runs/{rid}/steps/2.json",
     ]:
         assert expected in files
+
+
+def test_chat_on_finished_run_is_kept(api):
+    run = api.create_run()
+    api.wait_for(run["id"])
+    assert api.post(f"/runs/{run['id']}/chat", json={"message": "thanks!"}).status_code == 201
+    assert api.get(f"/runs/{run['id']}/chat").json()[-1]["message"] == "thanks!"

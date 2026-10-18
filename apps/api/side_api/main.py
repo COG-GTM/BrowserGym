@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
@@ -25,6 +26,7 @@ from .db import RunRecord, make_engine, session
 from .monitor import RunManager
 from .notify import Notifier
 from .schemas import (
+    TERMINAL_STATUSES,
     AgentInfo,
     ChatCreate,
     ChatMessage,
@@ -235,7 +237,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @router.post("/runs/{run_id}/cancel", response_model=Run, responses=NOT_FOUND)
     async def cancel_run(run_id: str) -> Run:
         get_record(run_id)
-        rec = manager.cancel(run_id)
+        rec = await asyncio.to_thread(manager.cancel, run_id)
         if rec is None:
             raise HTTPException(status_code=404, detail=f"run {run_id} not found")
         return rec.to_run()
@@ -286,9 +288,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "/runs/{run_id}/chat", response_model=ChatMessage, status_code=201, responses=NOT_FOUND
     )
     def send_chat(run_id: str, body: ChatCreate) -> ChatMessage:
-        get_record(run_id)
+        rec = get_record(run_id)
         msg = ChatMessage(role="user", message=body.message, timestamp=now_iso())
-        append_jsonl(run_paths(run_id).inbox, msg.model_dump(mode="json"))
+        paths = run_paths(run_id)
+        append_jsonl(paths.inbox, msg.model_dump(mode="json"))
+        if rec.status in TERMINAL_STATUSES:
+            # No runner left to echo it into chat.jsonl; record it so GET /chat shows it.
+            append_jsonl(paths.chat, msg.model_dump(mode="json"))
         return msg
 
     # -- events (SSE) -------------------------------------------------------
