@@ -4,7 +4,7 @@ import typing
 from dataclasses import dataclass
 
 from . import utils
-from .base import AbstractActionSet
+from .base import AbstractActionSet, register_python_includes
 from .functions import (  # check,; uncheck,
     clear,
     click,
@@ -501,7 +501,8 @@ Only a single action can be provided at once."""
 
         python_code = ""
 
-        # function definitions
+        # function definitions (compiled once and cached by execute_python_code)
+        register_python_includes(self.python_includes)
         python_code += self.python_includes
 
         # function calls
