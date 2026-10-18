@@ -7,6 +7,7 @@ import os
 import pickle
 import re
 import sys
+import tempfile
 import time
 import traceback
 import uuid
@@ -767,10 +768,16 @@ class ExpResult:
     def save_tape(self, filename: str = "tape.json"):
         if os.path.exists(self.exp_dir / filename):
             raise FileExistsError(f"{filename} already exists in {self.exp_dir}")
-        # serialize first so a failure does not leave a partial file behind
         tape_json = json.dumps(self.tape, indent=4, ensure_ascii=False, cls=DataclassJSONEncoder)
-        with open(self.exp_dir / filename, "w") as f:
-            f.write(tape_json)
+        # write to a temp file and link it into place, so a failed write never leaves a
+        # partial tape behind and an existing tape is never overwritten
+        fd, tmp_path = tempfile.mkstemp(dir=self.exp_dir, prefix=f".{filename}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(tape_json)
+            os.link(tmp_path, self.exp_dir / filename)
+        finally:
+            os.unlink(tmp_path)
 
     def get_screenshot(self, step: int, som=False) -> Image:
         key = (step, som)

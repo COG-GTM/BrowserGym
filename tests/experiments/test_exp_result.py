@@ -1,6 +1,7 @@
 import dataclasses
 import gzip
 import json
+import os
 import pickle
 from pathlib import Path
 
@@ -296,6 +297,39 @@ def test_save_tape(tmp_path):
         exp_result.save_tape()
 
 
+def test_save_tape_failed_write_leaves_no_file(tmp_path, monkeypatch):
+    exp_dir = _make_exp_dir(tmp_path)
+    exp_result = ExpResult(exp_dir)
+    files_before = set(os.listdir(exp_dir))
+
+    real_fdopen = os.fdopen
+
+    class _PartialWriter:
+        def __init__(self, f):
+            self._f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self._f.close()
+
+        def write(self, data):
+            self._f.write(data[:10])
+            raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "fdopen", lambda *a, **kw: _PartialWriter(real_fdopen(*a, **kw)))
+    with pytest.raises(OSError):
+        exp_result.save_tape()
+    assert set(os.listdir(exp_dir)) == files_before
+
+    monkeypatch.setattr(os, "fdopen", real_fdopen)
+    exp_result.save_tape()
+    with open(exp_dir / "tape.json") as f:
+        assert len(json.load(f)["steps"]) == 8
+    assert set(os.listdir(exp_dir)) == files_before | {"tape.json"}
+
+
 # --- summary / status ---
 
 
@@ -353,8 +387,7 @@ def test_yield_all_exp_results_skips_hidden_dirs(tmp_path):
     assert names == {"visible", "also_visible"}
 
     names = {
-        r.exp_dir.name
-        for r in yield_all_exp_results(tmp_path, progress_fn=None, load_hidden=True)
+        r.exp_dir.name for r in yield_all_exp_results(tmp_path, progress_fn=None, load_hidden=True)
     }
     assert names == {"visible", "also_visible", "_hidden", ".dot_hidden"}
 
