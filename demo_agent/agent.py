@@ -2,9 +2,9 @@ import base64
 import dataclasses
 import io
 import logging
+import re
 
 import numpy as np
-import openai
 from PIL import Image
 
 from browsergym.core.action.highlevel import HighLevelActionSet
@@ -12,7 +12,18 @@ from browsergym.core.action.python import PythonActionSet
 from browsergym.experiments import AbstractAgentArgs, Agent
 from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_str, prune_html
 
+from llm import DEFAULT_MODELS, UsageTracker, make_llm
+
 logger = logging.getLogger(__name__)
+
+
+def split_think_action(text: str) -> tuple[str, str]:
+    """Split an LLM reply into (chain-of-thought, action code from the last ``` block)."""
+    blocks = re.findall(r"```(?:python)?\s*(.*?)```", text, re.DOTALL)
+    if not blocks:
+        return "", text.strip()
+    think = re.sub(r"```.*?```", "", text, flags=re.DOTALL).strip()
+    return think, blocks[-1].strip()
 
 
 def image_to_jpg_base64_url(image: np.ndarray | Image.Image):
@@ -31,7 +42,7 @@ def image_to_jpg_base64_url(image: np.ndarray | Image.Image):
 
 
 class DemoAgent(Agent):
-    """A basic agent using OpenAI API, to demonstrate BrowserGym's functionalities."""
+    """A basic LLM agent (OpenAI, Anthropic or offline mock) to demonstrate BrowserGym."""
 
     def obs_preprocessor(self, obs: dict) -> dict:
 
@@ -56,9 +67,12 @@ class DemoAgent(Agent):
         use_html: bool,
         use_axtree: bool,
         use_screenshot: bool,
+        provider: str = "openai",
+        max_retries: int = 4,
     ) -> None:
         super().__init__()
-        self.model_name = model_name
+        self.provider = provider
+        self.model_name = model_name or DEFAULT_MODELS[provider]
         self.chat_mode = chat_mode
         self.use_html = use_html
         self.use_axtree = use_axtree
@@ -67,7 +81,8 @@ class DemoAgent(Agent):
         if not (use_html or use_axtree):
             raise ValueError(f"Either use_html or use_axtree must be set to True.")
 
-        self.openai_client = openai.OpenAI()
+        self.llm = make_llm(provider, self.model_name, max_retries=max_retries)
+        self.usage = UsageTracker(model=self.model_name)
 
         self.action_set = HighLevelActionSet(
             subsets=["chat", "tab", "nav", "bid", "infeas"],  # define a subset of the action space
@@ -81,7 +96,17 @@ class DemoAgent(Agent):
 
         self.action_history = []
 
-    def get_action(self, obs: dict) -> tuple[str, dict]:
+    def get_action(self, obs: dict) -> tuple[str | None, dict]:
+        # in goal (non-chat) mode, answering the user ends the episode
+        if (
+            not self.chat_mode
+            and self.action_history
+            and self.action_history[-1].startswith("send_msg_to_user")
+            and not obs["last_action_error"]
+        ):
+            logger.info("Agent answered the user, ending episode. Usage: %s", self.usage.summary())
+            return None, {"think": "Answer sent to the user, stopping.", "stats": {}}
+
         system_msgs = []
         user_msgs = []
 
@@ -312,21 +337,15 @@ You will now think step by step and produce your next best action. Reflect on yo
                         f"Unknown message type {repr(message['type'])} in the task goal."
                     )
         full_prompt_txt = "\n".join(prompt_text_strings)
-        logger.info(full_prompt_txt)
+        logger.debug(full_prompt_txt)
 
-        # query OpenAI model
-        response = self.openai_client.chat.completions.create(
-            model=self.model_name,
-            messages=[
-                {"role": "system", "content": system_msgs},
-                {"role": "user", "content": user_msgs},
-            ],
-        )
-        action = response.choices[0].message.content
+        response = self.llm.complete(system_msgs, user_msgs)
+        stats = self.usage.record(response)
+        think, action = split_think_action(response.text)
 
         self.action_history.append(action)
 
-        return action, {}
+        return action, {"think": think, "stats": stats}
 
 
 @dataclasses.dataclass
@@ -338,7 +357,9 @@ class DemoAgentArgs(AbstractAgentArgs):
     internal states of the agent.
     """
 
-    model_name: str = "gpt-4o-mini"
+    model_name: str = DEFAULT_MODELS["openai"]
+    provider: str = "openai"
+    max_retries: int = 4
     chat_mode: bool = False
     demo_mode: str = "off"
     use_html: bool = False
@@ -353,4 +374,6 @@ class DemoAgentArgs(AbstractAgentArgs):
             use_html=self.use_html,
             use_axtree=self.use_axtree,
             use_screenshot=self.use_screenshot,
+            provider=self.provider,
+            max_retries=self.max_retries,
         )
