@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import {
   getApi,
   isTerminal,
@@ -20,6 +20,8 @@ export interface RunLiveState {
   error: Error | null;
   loading: boolean;
   pending: RunEvent[];
+  /** User messages accepted by POST /chat but not yet echoed into chat.jsonl by the runner. */
+  outbox: ChatMessage[];
 }
 
 type Action =
@@ -31,7 +33,7 @@ type Action =
   | { type: "chat"; message: ChatMessage }
   | { type: "error"; error: Error };
 
-const initial: RunLiveState = {
+export const initialRunLiveState: RunLiveState = {
   run: null,
   steps: [],
   chat: [],
@@ -40,6 +42,7 @@ const initial: RunLiveState = {
   error: null,
   loading: true,
   pending: [],
+  outbox: [],
 };
 
 const chatKey = (m: ChatMessage) => `${m.role}|${m.timestamp}|${m.message}`;
@@ -61,6 +64,27 @@ function mergeChat(chat: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] 
   return out;
 }
 
+// The runner re-stamps echoed user messages, so match on text and a send time no later than the echo.
+const ECHO_CLOCK_SKEW_MS = 2000;
+
+function isEchoOf(echo: ChatMessage, sent: ChatMessage): boolean {
+  return (
+    echo.role === "user" &&
+    echo.message === sent.message &&
+    Date.parse(echo.timestamp) >= Date.parse(sent.timestamp) - ECHO_CLOCK_SKEW_MS
+  );
+}
+
+function confirmOutbox(outbox: ChatMessage[], confirmed: ChatMessage[]): ChatMessage[] {
+  if (!outbox.length) return outbox;
+  const remaining = [...outbox];
+  for (const m of confirmed) {
+    const i = remaining.findIndex((sent) => isEchoOf(m, sent));
+    if (i !== -1) remaining.splice(i, 1);
+  }
+  return remaining;
+}
+
 function applyEvent(state: RunLiveState, event: RunEvent): RunLiveState {
   switch (event.type) {
     case "step": {
@@ -79,7 +103,9 @@ function applyEvent(state: RunLiveState, event: RunEvent): RunLiveState {
       return { ...state, run };
     }
     case "chat":
-      return event.chat ? { ...state, chat: mergeChat(state.chat, [event.chat]) } : state;
+      return event.chat
+        ? { ...state, chat: mergeChat(state.chat, [event.chat]), outbox: confirmOutbox(state.outbox, [event.chat]) }
+        : state;
     case "log":
       return event.log
         ? { ...state, logs: [...state.logs, { timestamp: event.timestamp, message: event.log }].slice(-200) }
@@ -89,16 +115,17 @@ function applyEvent(state: RunLiveState, event: RunEvent): RunLiveState {
   }
 }
 
-function reducer(state: RunLiveState, action: Action): RunLiveState {
+export function runLiveReducer(state: RunLiveState, action: Action): RunLiveState {
   switch (action.type) {
     case "reset":
-      return initial;
+      return initialRunLiveState;
     case "loaded": {
       let next: RunLiveState = {
         ...state,
         run: action.run,
         steps: mergeSteps(action.steps, state.steps),
         chat: mergeChat(action.chat, state.chat),
+        outbox: confirmOutbox(state.outbox, action.chat),
         loading: false,
         error: null,
         pending: [],
@@ -114,7 +141,9 @@ function reducer(state: RunLiveState, action: Action): RunLiveState {
     case "run":
       return { ...state, run: action.run };
     case "chat":
-      return { ...state, chat: mergeChat(state.chat, [action.message]) };
+      // Already echoed (e.g. the SSE event beat the POST response): nothing to add.
+      if (state.chat.some((m) => isEchoOf(m, action.message))) return state;
+      return { ...state, outbox: [...state.outbox, action.message] };
     case "error":
       return { ...state, error: action.error, loading: false };
   }
@@ -125,7 +154,7 @@ function reducer(state: RunLiveState, action: Action): RunLiveState {
  * a terminal status arrives, then re-fetches once to pick up reward/error/finished_at.
  */
 export function useRunLive(runId: string) {
-  const [state, dispatch] = useReducer(reducer, initial);
+  const [state, dispatch] = useReducer(runLiveReducer, initialRunLiveState);
   // Results from a previous run id (client-side navigation mid-fetch) must not land in this run's state.
   const currentRunId = useRef(runId);
   const isCurrent = useCallback(() => currentRunId.current === runId, [runId]);
@@ -190,5 +219,7 @@ export function useRunLive(runId: string) {
     [runId, isCurrent],
   );
 
-  return { ...state, cancel, sendChat, reload };
+  const { outbox, ...rest } = state;
+  const chat = useMemo(() => (outbox.length ? [...rest.chat, ...outbox] : rest.chat), [rest.chat, outbox]);
+  return { ...rest, chat, cancel, sendChat, reload };
 }
