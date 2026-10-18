@@ -12,6 +12,7 @@ import torch
 
 from browsergym.core.task import AbstractBrowserTask
 
+from .captioning import CAPTIONING_MODEL_NAME, lazy_captioning_fn
 from .instance import VisualWebArenaInstance
 from .utils import image_url_to_pil_image, pil_image_to_data_uri
 
@@ -164,7 +165,6 @@ class GenericVisualWebArenaTask(AbstractBrowserTask):
     def setup(self, page: playwright.sync_api.Page) -> tuple[str, dict]:
         # import webarena on instanciation
         from visualwebarena.evaluation_harness.evaluators import evaluator_router
-        from visualwebarena.evaluation_harness.image_utils import get_captioning_fn
 
         # pick a task at random
         self.config = self.random.choice(self.task_configs)
@@ -175,27 +175,16 @@ class GenericVisualWebArenaTask(AbstractBrowserTask):
             f.flush()
             self.config_file = f.name
 
-        # build the evaluator
-        from transformers.utils.logging import (
-            disable_progress_bar,
-            enable_progress_bar,
-            is_progress_bar_enabled,
-        )
-
-        hide_progress_bar = is_progress_bar_enabled()
-        if hide_progress_bar:
-            disable_progress_bar()
-        captioning_fn = get_captioning_fn(
+        # build the evaluator (the captioning model is shared across episodes and only loaded on first use)
+        captioning_fn = lazy_captioning_fn(
             device=self.eval_captioning_model_device,
             dtype=(
                 torch.float16
                 if (self.eval_captioning_model_device == "cuda" and torch.cuda.is_available())
                 else torch.float32
             ),
-            model_name="Salesforce/blip2-flan-t5-xl",
+            model_name=CAPTIONING_MODEL_NAME,
         )
-        if hide_progress_bar:
-            enable_progress_bar()
         self.evaluator = evaluator_router(self.config_file, captioning_fn=captioning_fn)
 
         # reset instance if needed (classifieds domain only)
