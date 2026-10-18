@@ -1271,6 +1271,110 @@ mouse_up({repr(x)}, {repr(y)})
     assert not checkbox.has_attr("checked")
 
 
+def test_mouse_click_with_scale_factor():
+    action_set = HighLevelActionSet(subsets=["bid", "coord"])
+
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": CHECKBOX_URL},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        timeout=__TIMEOUT,
+        action_mapping=action_set.to_python_code,
+    )
+
+    def get_checkbox_elem(obs):
+        soup = bs4.BeautifulSoup(
+            flatten_dom_to_str(
+                obs["dom_object"], obs["extra_element_properties"], with_center_coords=True
+            ),
+            "lxml",
+        )
+        return soup.find("input", attrs={"type": "checkbox", "id": "vehicle1"})
+
+    obs, info = env.reset()
+    page_x, page_y = ast.literal_eval(get_checkbox_elem(obs).get("center"))
+
+    # same zoom as MiniWoB: screenshot and bboxes are scaled up, actions are scaled back down
+    env.unwrapped.page._bgym_scale_factor = 1.5
+    obs, reward, term, trunc, info = env.step("noop()")
+    checkbox = get_checkbox_elem(obs)
+
+    assert not obs["last_action_error"]
+    assert not checkbox.has_attr("checked")
+    x, y = ast.literal_eval(checkbox.get("center"))
+    # centers are rounded to integer pixels
+    assert (x, y) == pytest.approx((page_x * 1.5, page_y * 1.5), abs=1)
+    assert obs["screenshot"].shape[:2] == (
+        round(env.unwrapped.page.viewport_size["height"] * 1.5),
+        round(env.unwrapped.page.viewport_size["width"] * 1.5),
+    )
+
+    # click at the scaled center, which must land on the checkbox
+    obs, reward, term, trunc, info = env.step(f"mouse_click({repr(x)}, {repr(y)})")
+    checkbox = get_checkbox_elem(obs)
+
+    assert not obs["last_action_error"]
+    assert checkbox.has_attr("checked")
+
+    env.close()
+
+
+def test_scroll_with_scale_factor():
+    action_set = HighLevelActionSet(subsets=["bid", "coord"])
+
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": LONG_PAGE_URL},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        timeout=__TIMEOUT,
+        action_mapping=action_set.to_python_code,
+    )
+
+    obs, info = env.reset()
+    page = env.unwrapped.page
+    page._bgym_scale_factor = 1.5
+
+    # a 300px scroll in screenshot space is a 200px scroll in page space
+    obs, reward, term, trunc, info = env.step("scroll(0, 300)")
+
+    assert not obs["last_action_error"]
+    page.wait_for_function("window.scrollY > 0", timeout=2000)
+    assert page.evaluate("window.scrollY") == pytest.approx(200, abs=1)
+
+    env.close()
+
+
+def test_click_missing_bid():
+    action_set = HighLevelActionSet(subsets=["bid"])
+
+    env = gym.make(
+        "browsergym/openended",
+        task_kwargs={"start_url": MULTI_IFRAME_URL},
+        headless=__HEADLESS,
+        slow_mo=__SLOW_MO,
+        timeout=__TIMEOUT,
+        action_mapping=action_set.to_python_code,
+    )
+
+    obs, info = env.reset()
+    frame_bids = [
+        elem.get(BID_ATTR)
+        for elem in bs4.BeautifulSoup(flatten_dom_to_str(obs["dom_object"]), "lxml").find_all(
+            "iframe"
+        )
+    ]
+    assert "a" in frame_bids
+
+    # missing frame, missing element inside an existing frame, missing element in the main frame
+    for bid in ["zz999", "a999999", "999999"]:
+        obs, reward, term, trunc, info = env.step(f"click({repr(bid)})")
+        assert obs["last_action_error"] == f'ValueError: Could not find element with bid "{bid}"'
+
+    env.close()
+
+
 # test that forced action can click an obstructed element
 @pytest.mark.parametrize("retry_with_force", [True, False])
 def test_forced_actions(retry_with_force):
