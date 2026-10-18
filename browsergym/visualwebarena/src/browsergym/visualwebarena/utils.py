@@ -5,11 +5,14 @@ import requests
 
 from typing import Literal
 
+# (connect, read) timeouts in seconds for out-of-browser goal image downloads
+IMAGE_DOWNLOAD_TIMEOUT = (10, 60)
+
 
 def image_url_to_pil_image(image_url: str) -> PIL.Image:
     if not image_url.startswith("http"):
         raise ValueError(f"Unexpected image URL: {image_url}")
-    response = requests.get(image_url, stream=True)
+    response = requests.get(image_url, stream=True, timeout=IMAGE_DOWNLOAD_TIMEOUT)
     if response.status_code != 200:
         raise ValueError(
             f"Could not download image from url {image_url} (status code {response.status_code})"
